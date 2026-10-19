@@ -373,7 +373,7 @@ func TestCustomerObjectMeta_SetsAccountNamespaceAndProtectsMetadata(t *testing.T
 		ResourceVersion:   "client-rv",
 		CreationTimestamp: created,
 		Labels: map[string]string{
-			"app":                                  "test",
+			"app":                                "test",
 			"seaplane.io/account-id":             "attacker",
 			"seaplane.io/claimed-by-cluster-uid": "attacker-cluster",
 		},
@@ -509,6 +509,44 @@ func TestMergeSpecJSON_TypedNilNodePoolSpecReturnsError(t *testing.T) {
 
 	err := MergeSpecJSON(spec, []byte(`{"labels":{"team":"api"}}`))
 	require.Error(t, err)
+}
+
+func TestMergeSpecJSON_ReplacesSuppliedClusterTags(t *testing.T) {
+	spec := &seaplanev1alpha1.ClusterSpec{
+		Tags: map[string]string{"old": "value", "keep": "old-value"},
+	}
+
+	err := MergeSpecJSON(spec, []byte(`{"tags":{"keep":"new-value","new":"value"}}`))
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"keep": "new-value", "new": "value"}, spec.Tags)
+}
+
+func TestMergeSpecJSON_ExplicitClusterTagsClearExisting(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		json string
+	}{
+		{name: "empty map", json: `{"tags":{}}`},
+		{name: "null", json: `{"tags":null}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := &seaplanev1alpha1.ClusterSpec{Tags: map[string]string{"old": "value"}}
+
+			err := MergeSpecJSON(spec, []byte(tc.json))
+			require.NoError(t, err)
+			assert.Empty(t, spec.Tags)
+		})
+	}
+}
+
+func TestMergeSpecJSON_PreservesOmittedClusterTags(t *testing.T) {
+	spec := &seaplanev1alpha1.ClusterSpec{
+		Tags: map[string]string{"existing": "value"},
+	}
+
+	err := MergeSpecJSON(spec, []byte(`{"displayName":"updated"}`))
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"existing": "value"}, spec.Tags)
 }
 
 func TestSyncNodePoolPassthrough_DefaultsAutoRepairWhenNil(t *testing.T) {

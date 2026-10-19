@@ -267,7 +267,14 @@ func (h *ClusterHandler) decodeClusterCreateRequest(accountID string, body []byt
 	if err := validation.ValidateAccountNamespace(req.Namespace, accountID); err != nil {
 		return nil, &ErrClusterCreateNamespaceMismatch
 	}
-	if errs := h.validator.ValidateCreate(&req.Spec, featuregate.Default); errs != nil {
+	errs := h.validator.ValidateCreate(&req.Spec, featuregate.Default)
+	errs = append(errs, validation.ValidateCustomerAWSTags(req.Spec.Tags)...)
+	var platformTags []hypershiftv1beta1.AWSResourceTag
+	if req.Spec.HostedCluster.Platform.AWS != nil {
+		platformTags = req.Spec.HostedCluster.Platform.AWS.ResourceTags
+	}
+	errs = append(errs, validation.ValidateClusterAWSTagBudget(req.Spec.Tags, platformTags)...)
+	if len(errs) > 0 {
 		apiErr := ErrClusterValidation.WithErrors(errs)
 		return nil, &apiErr
 	}
@@ -445,6 +452,45 @@ func (h *ClusterHandler) Update(w http.ResponseWriter, r *http.Request) {
 			mergeErr = err
 			return err
 		}
+		if clusterAWSTagsSupplied(rawSpec) {
+			tagErrs := validation.ValidateCustomerAWSTags(current.Spec.Tags)
+			var platformTags []hypershiftv1beta1.AWSResourceTag
+			if current.Spec.HostedCluster.Platform.AWS != nil {
+				platformTags = current.Spec.HostedCluster.Platform.AWS.ResourceTags
+			}
+			tagErrs = append(tagErrs, validation.ValidateClusterAWSTagBudget(
+				current.Spec.Tags,
+				platformTags,
+			)...)
+			if len(tagErrs) > 0 {
+				validationErr = tagErrs
+				return fmt.Errorf("invalid cluster AWS tags")
+			}
+			if clusterTagsSupplied(rawSpec) {
+				nodePools, err := h.db.ListNodePools(ctx, accountID, string(current.UID))
+				if err != nil {
+					return fmt.Errorf("list NodePools for AWS tag validation: %w", err)
+				}
+				for i := range nodePools.Items {
+					nodePool := &nodePools.Items[i]
+					if nodePool.Spec.NodePool.ClusterName != current.Name && !strings.HasPrefix(nodePool.Name, current.Name+".") {
+						continue
+					}
+					var nodePoolTags []hypershiftv1beta1.AWSResourceTag
+					if nodePool.Spec.NodePool.Platform.AWS != nil {
+						nodePoolTags = nodePool.Spec.NodePool.Platform.AWS.ResourceTags
+					}
+					nodePoolErrs := validation.ValidateNodePoolAWSTagBudget(current.Spec.Tags, nodePoolTags, "spec.tags")
+					for _, tagErr := range nodePoolErrs {
+						tagErr.Reason = fmt.Sprintf("NodePool %q: %s", nodePool.Name, tagErr.Reason)
+					}
+					validationErr = append(validationErr, nodePoolErrs...)
+				}
+				if len(validationErr) > 0 {
+					return fmt.Errorf("invalid cluster AWS tags for existing NodePools")
+				}
+			}
+		}
 		queueURL, region := clusterTerminationHandlerQueue(current)
 		queueChanged := queueURL != oldQueueURL || region != oldRegion
 		if queueChanged && queueURL != "" {
@@ -526,6 +572,27 @@ func terminationHandlerQueueURLs(clusters []seaplanev1alpha1.Cluster, excludeNam
 		}
 	}
 	return queueURLs
+}
+
+func clusterAWSTagsSupplied(rawSpec map[string]any) bool {
+	if _, exists := rawSpec["tags"]; exists {
+		return true
+	}
+	hostedCluster, ok := rawSpec["hostedCluster"].(map[string]any)
+	if !ok {
+		return false
+	}
+	platform, ok := hostedCluster["platform"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, exists := platform["aws"]
+	return exists
+}
+
+func clusterTagsSupplied(rawSpec map[string]any) bool {
+	_, exists := rawSpec["tags"]
+	return exists
 }
 
 // Delete handles DELETE /api/v0/clusters/{id}

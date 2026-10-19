@@ -703,3 +703,29 @@ func TestHostedClusterCustomerTagsYieldToPassthroughTags(t *testing.T) {
 		t.Errorf("environment = %q, want %q", got, "service-managed")
 	}
 }
+
+func TestHostedClusterSystemTagsTakePrecedenceOverDuplicatePassthroughTags(t *testing.T) {
+	cluster := testCluster()
+	cluster.Spec.HostedCluster.Platform.AWS.ResourceTags = []hypershiftv1beta1.AWSResourceTag{
+		{Key: "red-hat-managed", Value: "false"},
+		{Key: "kubernetes.io/cluster/abc12345", Value: "shared"},
+		{Key: "passthrough", Value: "first"},
+		{Key: "passthrough", Value: "second"},
+	}
+
+	hc := renderHostedCluster(t, cluster)
+	tags := hc.Spec.Platform.AWS.ResourceTags
+	if len(tags) != 3 {
+		t.Fatalf("resourceTags = %v, want system tags and first passthrough value only", tags)
+	}
+	got := tagPairs(tags)
+	if got["red-hat-managed"] != "true" {
+		t.Errorf("reserved tag value = %q, want true", got["red-hat-managed"])
+	}
+	if got["kubernetes.io/cluster/abc12345"] != "owned" {
+		t.Errorf("cluster ownership tag value = %q, want owned", got["kubernetes.io/cluster/abc12345"])
+	}
+	if got["passthrough"] != "first" {
+		t.Errorf("passthrough tag value = %q, want first", got["passthrough"])
+	}
+}

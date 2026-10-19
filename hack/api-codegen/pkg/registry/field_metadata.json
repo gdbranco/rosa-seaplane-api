@@ -744,7 +744,7 @@
   },
   {
     "fieldPath": "spec.tags",
-    "writeMode": "immutable",
+    "writeMode": "mutable",
     "ownerType": "Cluster",
     "ownerGVK": "seaplane.io/v1alpha1.Cluster"
   },

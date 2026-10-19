@@ -772,7 +772,7 @@ var FieldRegistry = TypedFieldRegistry{
 		},
 		"spec.tags": {
 			FieldPath: "spec.tags",
-			WriteMode: Immutable,
+			WriteMode: Mutable,
 			OwnerType: "Cluster",
 			OwnerGVK:  "seaplane.io/v1alpha1.Cluster",
 		},

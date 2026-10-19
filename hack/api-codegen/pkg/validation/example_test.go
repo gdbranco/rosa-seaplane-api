@@ -52,9 +52,8 @@ func ExampleValidator_Validate_serviceSet() {
 	//   field spec.accountId: field is platform-managed (service-set) and cannot be set by customers
 }
 
-// Example of blocking immutable field changes. Customer AWS tags are applied
-// when the cluster's AWS resources are provisioned and cannot be changed
-// afterwards, so spec.tags is marked immutable.
+// Example of blocking immutable field changes. The cluster's DNS reservation
+// binding cannot be changed after creation.
 func ExampleValidator_Validate_immutable() {
 	v := validation.NewValidator()
 
@@ -62,10 +61,10 @@ func ExampleValidator_Validate_immutable() {
 		Operation:    validation.OperationUpdate,
 		ResourceType: "Cluster",
 		Fields: map[string]any{
-			"spec.tags": map[string]any{"cost-center": "cc-9999"},
+			"spec.dnsReservationId": "reservation-new",
 		},
 		ExistingFields: map[string]any{
-			"spec.tags": map[string]any{"cost-center": "cc-1234"},
+			"spec.dnsReservationId": "reservation-existing",
 		},
 		FeatureSet: featuregate.Default,
 	}
@@ -74,7 +73,7 @@ func ExampleValidator_Validate_immutable() {
 	fmt.Printf("Error: %v\n", err)
 	// Output:
 	// Error: validation failed:
-	//   field spec.tags: field is immutable and cannot be changed after creation
+	//   field spec.dnsReservationId: field is immutable and cannot be changed after creation
 }
 
 // Example of feature gate enforcement

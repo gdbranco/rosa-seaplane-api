@@ -21,39 +21,54 @@ func MergeSpecJSON(dst any, specJSON []byte) error {
 	if len(specJSON) == 0 {
 		return nil
 	}
-	if err := resetSuppliedNodePoolLabelMaps(dst, specJSON); err != nil {
+	if err := resetSuppliedMaps(dst, specJSON); err != nil {
 		return err
 	}
 	return json.Unmarshal(specJSON, dst)
 }
 
-// resetSuppliedNodePoolLabelMaps ensures that a supplied label map replaces
-// the existing map. encoding/json otherwise merges object keys when decoding
-// into a non-nil map, which makes it impossible for callers to remove labels.
-func resetSuppliedNodePoolLabelMaps(dst any, specJSON []byte) error {
-	nodePoolSpec, ok := dst.(*seaplanev1alpha1.NodePoolSpec)
-	if !ok || nodePoolSpec == nil {
-		return nil
-	}
-	var supplied struct {
-		Labels   json.RawMessage `json:"labels"`
-		NodePool json.RawMessage `json:"nodePool"`
-	}
-	if err := json.Unmarshal(specJSON, &supplied); err != nil {
-		return err
-	}
-	if supplied.Labels != nil {
-		nodePoolSpec.Labels = nil
-	}
-	if supplied.NodePool != nil {
-		var nodePool struct {
-			NodeLabels json.RawMessage `json:"nodeLabels"`
+// resetSuppliedMaps ensures that explicitly supplied maps replace their stored
+// values. encoding/json otherwise merges object keys when decoding into a
+// non-nil map, preventing callers from removing keys with a partial update.
+func resetSuppliedMaps(dst any, specJSON []byte) error {
+	switch spec := dst.(type) {
+	case *seaplanev1alpha1.ClusterSpec:
+		if spec == nil {
+			return nil
 		}
-		if err := json.Unmarshal(supplied.NodePool, &nodePool); err != nil {
+		var supplied struct {
+			Tags json.RawMessage `json:"tags"`
+		}
+		if err := json.Unmarshal(specJSON, &supplied); err != nil {
 			return err
 		}
-		if nodePool.NodeLabels != nil {
-			nodePoolSpec.NodePool.NodeLabels = nil
+		if supplied.Tags != nil {
+			spec.Tags = nil
+		}
+	case *seaplanev1alpha1.NodePoolSpec:
+		if spec == nil {
+			return nil
+		}
+		var supplied struct {
+			Labels   json.RawMessage `json:"labels"`
+			NodePool json.RawMessage `json:"nodePool"`
+		}
+		if err := json.Unmarshal(specJSON, &supplied); err != nil {
+			return err
+		}
+		if supplied.Labels != nil {
+			spec.Labels = nil
+		}
+		if supplied.NodePool != nil {
+			var nodePool struct {
+				NodeLabels json.RawMessage `json:"nodeLabels"`
+			}
+			if err := json.Unmarshal(supplied.NodePool, &nodePool); err != nil {
+				return err
+			}
+			if nodePool.NodeLabels != nil {
+				spec.NodePool.NodeLabels = nil
+			}
 		}
 	}
 	return nil
