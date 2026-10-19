@@ -1242,6 +1242,93 @@ func TestClusterHandler_Update_Success(t *testing.T) {
 	}
 }
 
+func TestClusterHandler_Update_ReplacesAndClearsTags(t *testing.T) {
+	cluster := testClusterCR("cluster-123", "test-cluster", testAccountID)
+	cluster.Spec.Tags = map[string]string{"owner": "old", "remove": "this"}
+	scheme := newTestScheme()
+	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	handler := NewClusterHandler(seaplanedb.NewClientFrom(fc, logger), "", 0, logger)
+
+	updateTags := func(tags map[string]string) public.Cluster {
+		t.Helper()
+		body := mustMarshal(t, map[string]any{"spec": map[string]any{"tags": tags}})
+		req := httptest.NewRequest(http.MethodPut, "/api/v0/clusters/test-cluster", bytes.NewReader(body))
+		req = req.WithContext(testContext(testAccountID))
+		req = mux.SetURLVars(req, map[string]string{"id": "test-cluster"})
+		w := httptest.NewRecorder()
+		handler.Update(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var result public.Cluster
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatalf("decode cluster response: %v", err)
+		}
+		return result
+	}
+
+	result := updateTags(map[string]string{"owner": "new"})
+	if len(result.Spec.Tags) != 1 || result.Spec.Tags["owner"] != "new" {
+		t.Errorf("response tags = %v, want only owner=new", result.Spec.Tags)
+	}
+	stored, err := handler.db.GetCluster(context.Background(), testAccountID, "test-cluster")
+	if err != nil {
+		t.Fatalf("get updated cluster: %v", err)
+	}
+	if len(stored.Spec.Tags) != 1 || stored.Spec.Tags["owner"] != "new" {
+		t.Errorf("stored tags = %v, want only owner=new", stored.Spec.Tags)
+	}
+
+	result = updateTags(map[string]string{})
+	if len(result.Spec.Tags) != 0 {
+		t.Errorf("response tags after empty-map update = %v, want empty", result.Spec.Tags)
+	}
+	stored, err = handler.db.GetCluster(context.Background(), testAccountID, "test-cluster")
+	if err != nil {
+		t.Fatalf("get cluster after clearing tags: %v", err)
+	}
+	if len(stored.Spec.Tags) != 0 {
+		t.Errorf("stored tags after empty-map update = %v, want empty", stored.Spec.Tags)
+	}
+}
+
+func TestClusterHandler_Update_RejectsTagsExceedingNodePoolBudget(t *testing.T) {
+	cluster := testClusterCR("cluster-123", "test-cluster", testAccountID)
+	nodePool := testNodePoolCR("test-cluster.workers", testAccountID)
+	nodePool.Labels[clusterUIDLabel] = string(cluster.UID)
+	nodePool.Spec.NodePool.ClusterName = cluster.Name
+	nodePool.Spec.NodePool.Platform = hypershiftv1beta1.NodePoolPlatform{
+		Type: hypershiftv1beta1.AWSPlatform,
+		AWS: &hypershiftv1beta1.AWSNodePoolPlatform{ResourceTags: []hypershiftv1beta1.AWSResourceTag{
+			{Key: "pool-one", Value: "value"},
+			{Key: "pool-two", Value: "value"},
+		}},
+	}
+	scheme := newTestScheme()
+	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, nodePool).Build()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	handler := NewClusterHandler(seaplanedb.NewClientFrom(fc, logger), "", 0, logger)
+	tags := make(map[string]string)
+	for i := range 25 - 2 {
+		tags[fmt.Sprintf("customer-%d", i)] = "value"
+	}
+	body := mustMarshal(t, map[string]any{"spec": map[string]any{"tags": tags}})
+	req := httptest.NewRequest(http.MethodPut, "/api/v0/clusters/test-cluster", bytes.NewReader(body))
+	req = req.WithContext(testContext(testAccountID))
+	req = mux.SetURLVars(req, map[string]string{"id": "test-cluster"})
+	w := httptest.NewRecorder()
+
+	handler.Update(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "test-cluster.workers") {
+		t.Errorf("expected NodePool-specific tag budget error, got %q", w.Body.String())
+	}
+}
+
 func TestClusterHandler_Update_RejectsDuplicateSpotTerminationQueueURL(t *testing.T) {
 	scheme := newTestScheme()
 	target := testClusterCR("target-uid", "target", testAccountID)

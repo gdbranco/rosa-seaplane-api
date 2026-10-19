@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	hypershiftv1beta1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
@@ -65,6 +66,23 @@ func validateNodePoolEC2InstanceMetadataHttpTokens(value public.EC2InstanceMetad
 			Reason: "must be either required or optional",
 		},
 	}
+}
+
+func nodePoolAWSTagsSupplied(rawSpec map[string]any) bool {
+	nodePool, ok := rawSpec["nodePool"].(map[string]any)
+	if !ok {
+		return false
+	}
+	platform, ok := nodePool["platform"].(map[string]any)
+	if !ok {
+		return false
+	}
+	aws, ok := platform["aws"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, exists := aws["resourceTags"]
+	return exists
 }
 
 func (h *NodePoolHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -228,6 +246,14 @@ func (h *NodePoolHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, ErrNodePoolCreateClusterDeleting, h.logger)
 		return
 	}
+	var nodePoolTags []hypershiftv1beta1.AWSResourceTag
+	if req.Spec.NodePool.Platform.AWS != nil {
+		nodePoolTags = req.Spec.NodePool.Platform.AWS.ResourceTags
+	}
+	if errs := validation.ValidateNodePoolAWSTagBudget(cluster.Spec.Tags, nodePoolTags, "spec.nodePool.platform.aws.resourceTags"); len(errs) > 0 {
+		writeAPIError(w, ErrNodePoolValidation.WithErrors(errs), h.logger)
+		return
+	}
 	h.logger.Info("creating nodepool", "account_id", accountID, "cluster_uid", cluster.UID, "nodepool_name", req.Name)
 
 	// internalPoolID is retained as a service-set implementation field; FleetDB UID
@@ -339,6 +365,38 @@ func (h *NodePoolHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if err := seaplanedb.MergeSpecJSON(&current.Spec, envelope.Spec); err != nil {
 			mergeErr = err
 			return fmt.Errorf("merge nodepool spec: %w", err)
+		}
+		if nodePoolAWSTagsSupplied(rawSpec) {
+			clusterName := current.Spec.NodePool.ClusterName
+			if clusterName == "" {
+				clusterName, _, err = validation.ParseNodePoolName(current.Name)
+				if err != nil {
+					validationErr = validation.ValidationErrors{&validation.ValidationError{
+						Field:  "spec.nodePool.platform.aws.resourceTags",
+						Reason: "unable to resolve the parent Cluster for tag budget validation",
+					}}
+					return fmt.Errorf("invalid nodepool AWS tags")
+				}
+			}
+			cluster, err := h.db.GetCluster(ctx, accountID, clusterName)
+			if err != nil {
+				if seaplanedb.IsNotFound(err) {
+					validationErr = validation.ValidationErrors{&validation.ValidationError{
+						Field:  "spec.nodePool.platform.aws.resourceTags",
+						Reason: "parent Cluster must be available for tag budget validation",
+					}}
+					return fmt.Errorf("invalid nodepool AWS tags")
+				}
+				return fmt.Errorf("get parent Cluster for tag budget validation: %w", err)
+			}
+			var nodePoolTags []hypershiftv1beta1.AWSResourceTag
+			if current.Spec.NodePool.Platform.AWS != nil {
+				nodePoolTags = current.Spec.NodePool.Platform.AWS.ResourceTags
+			}
+			if errs := validation.ValidateNodePoolAWSTagBudget(cluster.Spec.Tags, nodePoolTags, "spec.nodePool.platform.aws.resourceTags"); len(errs) > 0 {
+				validationErr = errs
+				return fmt.Errorf("invalid nodepool AWS tags")
+			}
 		}
 		if err := h.db.UpdateNodePool(ctx, current); err != nil {
 			return err

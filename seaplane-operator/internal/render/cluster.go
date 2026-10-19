@@ -387,13 +387,10 @@ func defaultEtcdSpec() hypershiftv1beta1.EtcdSpec {
 	}
 }
 
-// appendSystemTags prepends the Red Hat system tags to existing, then appends
-// the customer-defined tags from Cluster.Spec.Tags. System tags win on key
-// collision: they are written first and customerTags skips keys already
-// present, so a customer cannot shadow red-hat-managed or the cluster
-// ownership tag. Customer tags are emitted in sorted key order so repeated
-// renders of the same Cluster produce an identical HostedCluster spec and do
-// not cause spurious updates.
+// appendSystemTags prepends reserved system tags, preserves the first
+// passthrough value for each key, then appends non-conflicting customer tags.
+// Customer tags are emitted in sorted key order so repeated renders of the
+// same Cluster produce an identical spec and do not cause spurious updates.
 func appendSystemTags(existing []hypershiftv1beta1.AWSResourceTag, clusterID string, customerTags map[string]string) []hypershiftv1beta1.AWSResourceTag {
 	tags := []hypershiftv1beta1.AWSResourceTag{
 		{Key: "red-hat-managed", Value: "true"},
@@ -403,10 +400,15 @@ func appendSystemTags(existing []hypershiftv1beta1.AWSResourceTag, clusterID str
 			Key: fmt.Sprintf("kubernetes.io/cluster/%s", clusterID), Value: "owned",
 		})
 	}
-	tags = append(tags, existing...)
-
 	seen := make(map[string]struct{}, len(tags))
 	for _, t := range tags {
+		seen[t.Key] = struct{}{}
+	}
+	for _, t := range existing {
+		if _, exists := seen[t.Key]; exists {
+			continue
+		}
+		tags = append(tags, t)
 		seen[t.Key] = struct{}{}
 	}
 	for _, key := range slices.Sorted(maps.Keys(customerTags)) {

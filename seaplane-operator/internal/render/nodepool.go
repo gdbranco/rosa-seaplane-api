@@ -83,8 +83,8 @@ func NodePoolResource(nodePool *seaplanev1alpha1.NodePool, cluster *seaplanev1al
 			}
 		}
 		// The worker EC2 instances are created by the NodePool, not the
-		// HostedCluster, so the cluster's customer tags have to be applied here
-		// too for day-1 tagging to actually reach them.
+		// HostedCluster, so the current cluster tags must be propagated here for
+		// both initial creation and later tag updates.
 		npSpec.Platform.AWS.ResourceTags = appendSystemTags(npSpec.Platform.AWS.ResourceTags, "", cluster.Spec.Tags)
 	}
 

@@ -390,6 +390,7 @@ resources:
               goType: map
               operations:
                 - create
+                - update
     nodePool:
         sdkType: v1alpha1.NodePool
         fields:

@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	seaplanev1alpha1 "github.com/openshift-online/rosa-seaplane-api/api/v1alpha1"
+	public "github.com/openshift-online/rosa-seaplane-api/api/v1alpha1/public"
 	"github.com/openshift-online/rosa-seaplane-api/seaplane-api/pkg/clients/seaplanedb"
 	hypershiftv1beta1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 )
@@ -123,6 +124,55 @@ func TestNodePoolHandler_Update_AllowsUnchangedServiceManagedManagement(t *testi
 	}
 	if !updated.Spec.NodePool.Management.AutoRepair {
 		t.Error("round-trip update changed service-managed management.autoRepair")
+	}
+}
+
+func TestNodePoolHandler_Update_ChangesNativeResourceTags(t *testing.T) {
+	cluster := testClusterCR("cluster-uid", "test-cluster", testAccountID)
+	cluster.Spec.Tags = map[string]string{"environment": "test"}
+	nodePool := testNodePoolCR("test-cluster.workers", testAccountID)
+	nodePool.Labels[clusterUIDLabel] = string(cluster.UID)
+	nodePool.Spec.NodePool = seaplanev1alpha1.NodePoolSpecPassthrough{
+		ClusterName: cluster.Name,
+		Platform: hypershiftv1beta1.NodePoolPlatform{
+			Type: hypershiftv1beta1.AWSPlatform,
+			AWS: &hypershiftv1beta1.AWSNodePoolPlatform{
+				InstanceType: "m5.xlarge",
+				ResourceTags: []hypershiftv1beta1.AWSResourceTag{{Key: "owner", Value: "old"}},
+			},
+		},
+	}
+	scheme := newTestScheme()
+	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, nodePool).Build()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	handler := NewNodePoolHandler(seaplanedb.NewClientFrom(fc, logger), logger)
+	request := seaplanedb.InternalToPublicNodePool(nodePool)
+	request.Spec.NodePool.Platform.AWS.ResourceTags = []hypershiftv1beta1.AWSResourceTag{{Key: "owner", Value: "new"}}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v0/nodepools/"+nodePool.Name, bytes.NewReader(mustMarshal(t, request)))
+	req = req.WithContext(testContext(testAccountID))
+	req = mux.SetURLVars(req, map[string]string{"id": nodePool.Name})
+	w := httptest.NewRecorder()
+
+	handler.Update(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var response public.NodePool
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if tags := response.Spec.NodePool.Platform.AWS.ResourceTags; len(tags) != 1 || tags[0] != (hypershiftv1beta1.AWSResourceTag{Key: "owner", Value: "new"}) {
+		t.Errorf("response resourceTags = %v, want owner=new", tags)
+	}
+
+	var stored seaplanev1alpha1.NodePool
+	if err := fc.Get(context.Background(), types.NamespacedName{Namespace: "account-" + testAccountID, Name: nodePool.Name}, &stored); err != nil {
+		t.Fatalf("get updated NodePool: %v", err)
+	}
+	if tags := stored.Spec.NodePool.Platform.AWS.ResourceTags; len(tags) != 1 || tags[0] != (hypershiftv1beta1.AWSResourceTag{Key: "owner", Value: "new"}) {
+		t.Errorf("stored resourceTags = %v, want owner=new", tags)
 	}
 }
 
