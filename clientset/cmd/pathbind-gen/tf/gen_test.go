@@ -44,6 +44,12 @@ func TestRunGeneratesBundledTerraformObject(t *testing.T) {
       - path: spec.properties
         goType: map
         operations: [create]
+      - path: spec.tags
+        goType: map
+        operations: [create, update]
+      - path: spec.resourceTags
+        goType: string
+        operations: [create, update]
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +79,22 @@ resources:
         bundle: network
         type: map
         immutable: true
+      - path: spec.tags
+        type: map
+        description: "Customer AWS tags update in place; reserved system tags use part of the AWS tag budget."
+      - path: spec.resourceTags
+        type: string
+        flag: ""
+      - alias: no_cni
+        type: bool
+        optional: true
+        computed: true
+        immutable: true
+        operations: [create]
+      - alias: enabled
+        type: bool
+        bundle: autoscaling
+        operations: [create, update]
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -91,8 +113,14 @@ resources:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(state), `Network types.Object `+"`tfsdk:\"network\"`") {
+	if !strings.Contains(string(state), `tfsdk:"network"`) {
 		t.Fatalf("generated Terraform state did not contain network object:\n%s", state)
+	}
+	if strings.Contains(string(state), `tfsdk:"resource_tags"`) {
+		t.Fatalf("an alias with an empty flag should not be added to Terraform state:\n%s", state)
+	}
+	if strings.Contains(string(native), `hfsdk:"spec.resourceTags"`) {
+		t.Fatalf("an alias with an empty flag should not be pathbound from Terraform:\n%s", native)
 	}
 	resource, err := os.ReadFile(filepath.Join(output, "cluster_resource_gen.go"))
 	if err != nil {
@@ -101,7 +129,11 @@ resources:
 	resourceText := string(resource)
 	for _, want := range []string{
 		`"network": schema.SingleNestedAttribute`,
+		`"autoscaling": schema.SingleNestedAttribute`,
 		`"network_type": schema.StringAttribute`,
+		`"enabled": schema.BoolAttribute`,
+		`MarkdownDescription: "Customer AWS tags update in place; reserved system tags use part of the AWS tag budget."`,
+		`"no_cni": schema.BoolAttribute`,
 		`Clusters().Get(ctx, state.Name.ValueString(), hfwrappers.GetOptions{})`,
 		`Clusters().Get(ctx, plan.Name.ValueString(), hfwrappers.GetOptions{})`,
 		`Clusters().Delete(ctx, state.Name.ValueString(), hfwrappers.DeleteOptions{})`,
@@ -111,6 +143,13 @@ resources:
 		if !strings.Contains(resourceText, want) {
 			t.Errorf("generated resource missing %q", want)
 		}
+	}
+	noCNIPattern := regexp.MustCompile(`"no_cni": schema\.BoolAttribute\{[^}]*Optional:\s+true,[^}]*Computed:\s+true,[^}]*PlanModifiers:\s+\[\]planmodifier\.Bool\{\s*boolplanmodifier\.UseStateForUnknown\(\),\s*boolplanmodifier\.RequiresReplace\(\),`)
+	if !noCNIPattern.MatchString(resourceText) {
+		t.Errorf("optional-computed immutable no_cni should retain its input and resolve state before replacement checks:\n%s", resourceText)
+	}
+	if strings.Contains(resourceText, `"resource_tags": schema.`) {
+		t.Errorf("an alias with an empty flag should not appear in the Terraform schema:\n%s", resourceText)
 	}
 	if !regexp.MustCompile(`"network_type": schema\.StringAttribute\{[^}]*Sensitive:\s+true,`).MatchString(resourceText) {
 		t.Errorf("sensitive bundled field network_type should generate Sensitive: true:\n%s", resourceText)
@@ -605,7 +644,7 @@ func TestBuildFuncMapHelpers(t *testing.T) {
 	if got := functions["attrName"].(func(pkg.MergedAlias) string)(stringAlias); got != "my_field" {
 		t.Errorf("attrName = %q", got)
 	}
-	if got := functions["planModifiers"].(func(pkg.MergedAlias) string)(stringAlias); got != "stringplanmodifier.RequiresReplace(), stringplanmodifier.UseStateForUnknown()" {
+	if got := functions["planModifiers"].(func(pkg.MergedAlias) string)(stringAlias); got != "stringplanmodifier.UseStateForUnknown(), stringplanmodifier.RequiresReplace()" {
 		t.Errorf("planModifiers = %q", got)
 	}
 	if got := functions["planModifiers"].(func(pkg.MergedAlias) string)(pkg.MergedAlias{}); got != "" {
@@ -644,6 +683,7 @@ func TestBuildFuncMapHelpers(t *testing.T) {
 		want  string
 	}{
 		{pkg.MergedAlias{Type: "bool", Immutable: true}, "PlanModifiers: []planmodifier.Bool{boolplanmodifier.RequiresReplace()},"},
+		{pkg.MergedAlias{Type: "bool", Immutable: true, Computed: true}, "PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown(), boolplanmodifier.RequiresReplace()},"},
 		{pkg.MergedAlias{Type: "int32", Computed: true}, "PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},"},
 		{pkg.MergedAlias{Type: "unsupported", Immutable: true}, ""},
 		{pkg.MergedAlias{Type: "string"}, ""},

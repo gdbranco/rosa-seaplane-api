@@ -268,12 +268,8 @@ func (h *ClusterHandler) decodeClusterCreateRequest(accountID string, body []byt
 		return nil, &ErrClusterCreateNamespaceMismatch
 	}
 	errs := h.validator.ValidateCreate(&req.Spec, featuregate.Default)
-	errs = append(errs, validation.ValidateCustomerAWSTags(req.Spec.Tags)...)
-	var platformTags []hypershiftv1beta1.AWSResourceTag
-	if req.Spec.HostedCluster.Platform.AWS != nil {
-		platformTags = req.Spec.HostedCluster.Platform.AWS.ResourceTags
-	}
-	errs = append(errs, validation.ValidateClusterAWSTagBudget(req.Spec.Tags, platformTags)...)
+	errs = append(errs, validation.ValidateCustomerAWSTags(req.Spec.Tags, "spec.tags")...)
+	errs = append(errs, validation.ValidateClusterAWSTagBudget(req.Spec.Tags)...)
 	if len(errs) > 0 {
 		apiErr := ErrClusterValidation.WithErrors(errs)
 		return nil, &apiErr
@@ -394,136 +390,19 @@ func (h *ClusterHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract raw "spec" JSON first so we know which fields the caller actually
-	// sent. This is used for both the empty-spec guard and field-presence-aware
-	// validation (avoids false positives from zero-valued absent fields in a
-	// decoded struct).
-	var envelope struct {
-		Metadata struct {
-			Namespace string `json:"namespace"`
-		} `json:"metadata"`
-		Spec json.RawMessage `json:"spec"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		writeAPIError(w, ErrClusterUpdateInvalidBody, h.logger)
-		return
-	}
-	if err := validation.ValidateAccountNamespace(envelope.Metadata.Namespace, accountID); err != nil {
-		writeAPIError(w, ErrClusterUpdateNamespaceMismatch, h.logger)
-		return
-	}
-
-	// Reject absent spec (nil) and empty spec object ({}) — both are no-ops
-	// that indicate a malformed request rather than a deliberate partial update.
-	if len(envelope.Spec) == 0 || string(envelope.Spec) == "{}" {
-		writeAPIError(w, ErrClusterUpdateMissingFields, h.logger)
+	request, ok := h.decodeClusterUpdateRequest(w, body, accountID)
+	if !ok {
 		return
 	}
 
 	h.logger.Info("updating cluster", "account_id", accountID, "cluster_name", clusterName)
-
-	// Validate using the raw spec map so only fields the client actually sent
-	// are checked — avoids false positives from zero-valued absent fields when
-	// the body is decoded into a full struct.
-	var rawSpec map[string]any
-	if err := json.Unmarshal(envelope.Spec, &rawSpec); err != nil {
-		writeAPIError(w, ErrClusterUpdateInvalidBody, h.logger)
+	outcome, err := h.updateClusterWithRetry(ctx, accountID, clusterName, request)
+	if len(outcome.validationErr) != 0 {
+		writeAPIError(w, ErrClusterValidation.WithErrors(outcome.validationErr), h.logger)
 		return
 	}
-	// Reject semantically empty specs (nil, empty decoded maps, whitespace variants).
-	if len(rawSpec) == 0 {
-		writeAPIError(w, ErrClusterUpdateMissingFields, h.logger)
-		return
-	}
-	var updated *seaplanev1alpha1.Cluster
-	var validationErr validation.ValidationErrors
-	var mergeErr error
-	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		current, err := h.db.GetCluster(ctx, accountID, clusterName)
-		if err != nil {
-			return err
-		}
-		if errs := h.validator.ValidateUpdate(rawSpec, &current.Spec, featuregate.Default); errs != nil {
-			validationErr = errs
-			return fmt.Errorf("invalid cluster update")
-		}
-		oldQueueURL, oldRegion := clusterTerminationHandlerQueue(current)
-		if err := seaplanedb.MergeSpecJSON(&current.Spec, envelope.Spec); err != nil {
-			mergeErr = err
-			return err
-		}
-		if clusterAWSTagsSupplied(rawSpec) {
-			tagErrs := validation.ValidateCustomerAWSTags(current.Spec.Tags)
-			var platformTags []hypershiftv1beta1.AWSResourceTag
-			if current.Spec.HostedCluster.Platform.AWS != nil {
-				platformTags = current.Spec.HostedCluster.Platform.AWS.ResourceTags
-			}
-			tagErrs = append(tagErrs, validation.ValidateClusterAWSTagBudget(
-				current.Spec.Tags,
-				platformTags,
-			)...)
-			if len(tagErrs) > 0 {
-				validationErr = tagErrs
-				return fmt.Errorf("invalid cluster AWS tags")
-			}
-			if clusterTagsSupplied(rawSpec) {
-				nodePools, err := h.db.ListNodePools(ctx, accountID, string(current.UID))
-				if err != nil {
-					return fmt.Errorf("list NodePools for AWS tag validation: %w", err)
-				}
-				for i := range nodePools.Items {
-					nodePool := &nodePools.Items[i]
-					if nodePool.Spec.NodePool.ClusterName != current.Name && !strings.HasPrefix(nodePool.Name, current.Name+".") {
-						continue
-					}
-					var nodePoolTags []hypershiftv1beta1.AWSResourceTag
-					if nodePool.Spec.NodePool.Platform.AWS != nil {
-						nodePoolTags = nodePool.Spec.NodePool.Platform.AWS.ResourceTags
-					}
-					nodePoolErrs := validation.ValidateNodePoolAWSTagBudget(current.Spec.Tags, nodePoolTags, "spec.tags")
-					for _, tagErr := range nodePoolErrs {
-						tagErr.Reason = fmt.Sprintf("NodePool %q: %s", nodePool.Name, tagErr.Reason)
-					}
-					validationErr = append(validationErr, nodePoolErrs...)
-				}
-				if len(validationErr) > 0 {
-					return fmt.Errorf("invalid cluster AWS tags for existing NodePools")
-				}
-			}
-		}
-		queueURL, region := clusterTerminationHandlerQueue(current)
-		queueChanged := queueURL != oldQueueURL || region != oldRegion
-		if queueChanged && queueURL != "" {
-			existing, err := h.db.ListClusters(ctx, accountID)
-			if err != nil {
-				return err
-			}
-			if errs := validation.ValidateSpotTerminationHandlerQueueURL(queueURL, region, terminationHandlerQueueURLs(existing.Items, current.Name)); errs != nil {
-				validationErr = errs
-				return fmt.Errorf("invalid cluster update")
-			}
-		}
-		if queueChanged && queueURL != "" {
-			if _, err := h.db.ClaimSpotTerminationQueue(ctx, accountID, queueURL, clusterName); err != nil {
-				if seaplanedb.IsAlreadyExists(err) {
-					validationErr = validation.SpotTerminationHandlerQueueAlreadyInUse()
-					return fmt.Errorf("invalid cluster update")
-				}
-				return err
-			}
-		}
-		if err := h.db.UpdateCluster(ctx, current); err != nil {
-			return err
-		}
-		updated = current
-		return nil
-	})
-	if len(validationErr) != 0 {
-		writeAPIError(w, ErrClusterValidation.WithErrors(validationErr), h.logger)
-		return
-	}
-	if mergeErr != nil {
-		h.logger.Error("failed to merge cluster spec", "error", mergeErr)
+	if outcome.mergeErr != nil {
+		h.logger.Error("failed to merge cluster spec", "error", outcome.mergeErr)
 		writeAPIError(w, ErrClusterUpdateInvalidSpec, h.logger)
 		return
 	}
@@ -541,9 +420,167 @@ func (h *ClusterHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := api.Write(w, http.StatusOK, seaplanedb.InternalToPublicCluster(updated)); err != nil {
+	if err := api.Write(w, http.StatusOK, seaplanedb.InternalToPublicCluster(outcome.updated)); err != nil {
 		h.logger.Error("failed to write response", "error", err)
 	}
+}
+
+type clusterUpdateRequest struct {
+	spec    json.RawMessage
+	rawSpec map[string]any
+}
+
+type clusterUpdateOutcome struct {
+	updated       *seaplanev1alpha1.Cluster
+	validationErr validation.ValidationErrors
+	mergeErr      error
+}
+
+func (h *ClusterHandler) decodeClusterUpdateRequest(
+	w http.ResponseWriter,
+	body []byte,
+	accountID string,
+) (clusterUpdateRequest, bool) {
+	// Keep the raw spec so validation only considers fields the client sent.
+	var envelope struct {
+		Metadata struct {
+			Namespace string `json:"namespace"`
+		} `json:"metadata"`
+		Spec json.RawMessage `json:"spec"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		writeAPIError(w, ErrClusterUpdateInvalidBody, h.logger)
+		return clusterUpdateRequest{}, false
+	}
+	if err := validation.ValidateAccountNamespace(envelope.Metadata.Namespace, accountID); err != nil {
+		writeAPIError(w, ErrClusterUpdateNamespaceMismatch, h.logger)
+		return clusterUpdateRequest{}, false
+	}
+	if len(envelope.Spec) == 0 || string(envelope.Spec) == "{}" {
+		writeAPIError(w, ErrClusterUpdateMissingFields, h.logger)
+		return clusterUpdateRequest{}, false
+	}
+
+	var rawSpec map[string]any
+	if err := json.Unmarshal(envelope.Spec, &rawSpec); err != nil {
+		writeAPIError(w, ErrClusterUpdateInvalidBody, h.logger)
+		return clusterUpdateRequest{}, false
+	}
+	if len(rawSpec) == 0 {
+		writeAPIError(w, ErrClusterUpdateMissingFields, h.logger)
+		return clusterUpdateRequest{}, false
+	}
+	return clusterUpdateRequest{spec: envelope.Spec, rawSpec: rawSpec}, true
+}
+
+func (h *ClusterHandler) updateClusterWithRetry(
+	ctx context.Context,
+	accountID, clusterName string,
+	request clusterUpdateRequest,
+) (clusterUpdateOutcome, error) {
+	var outcome clusterUpdateOutcome
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		return h.updateClusterOnce(ctx, accountID, clusterName, request, &outcome)
+	})
+	return outcome, err
+}
+
+func (h *ClusterHandler) updateClusterOnce(
+	ctx context.Context,
+	accountID, clusterName string,
+	request clusterUpdateRequest,
+	outcome *clusterUpdateOutcome,
+) error {
+	current, err := h.db.GetCluster(ctx, accountID, clusterName)
+	if err != nil {
+		return err
+	}
+	if errs := h.validator.ValidateUpdate(request.rawSpec, &current.Spec, featuregate.Default); errs != nil {
+		outcome.validationErr = errs
+		return fmt.Errorf("invalid cluster update")
+	}
+
+	oldQueueURL, oldRegion := clusterTerminationHandlerQueue(current)
+	if err := seaplanedb.MergeSpecJSON(&current.Spec, request.spec); err != nil {
+		outcome.mergeErr = err
+		return err
+	}
+	if clusterTagsSupplied(request.rawSpec) {
+		tagErrs, err := h.validateUpdatedClusterTags(ctx, accountID, current)
+		if err != nil {
+			outcome.validationErr = tagErrs
+			return err
+		}
+	}
+
+	if errs, err := h.validateTerminationHandlerQueueUpdate(ctx, accountID, clusterName, current, oldQueueURL, oldRegion); err != nil {
+		outcome.validationErr = errs
+		return err
+	}
+	if err := h.db.UpdateCluster(ctx, current); err != nil {
+		return err
+	}
+	outcome.updated = current
+	return nil
+}
+
+func (h *ClusterHandler) validateUpdatedClusterTags(
+	ctx context.Context,
+	accountID string,
+	cluster *seaplanev1alpha1.Cluster,
+) (validation.ValidationErrors, error) {
+	errs := validation.ValidateCustomerAWSTags(cluster.Spec.Tags, "spec.tags")
+	errs = append(errs, validation.ValidateClusterAWSTagBudget(cluster.Spec.Tags)...)
+	if len(errs) > 0 {
+		return errs, fmt.Errorf("invalid cluster AWS tags")
+	}
+
+	nodePools, err := h.db.ListNodePools(ctx, accountID, string(cluster.UID))
+	if err != nil {
+		return nil, fmt.Errorf("list NodePools for AWS tag validation: %w", err)
+	}
+	for i := range nodePools.Items {
+		nodePool := &nodePools.Items[i]
+		if nodePool.Spec.NodePool.ClusterName != cluster.Name && !strings.HasPrefix(nodePool.Name, cluster.Name+".") {
+			continue
+		}
+		poolErrs := validation.ValidateNodePoolAWSTagBudget(cluster.Spec.Tags, nodePool.Spec.Tags, "spec.tags")
+		for _, tagErr := range poolErrs {
+			tagErr.Reason = fmt.Sprintf("NodePool %q: %s", nodePool.Name, tagErr.Reason)
+		}
+		errs = append(errs, poolErrs...)
+	}
+	if len(errs) > 0 {
+		return errs, fmt.Errorf("invalid cluster AWS tags for existing NodePools")
+	}
+	return errs, nil
+}
+
+func (h *ClusterHandler) validateTerminationHandlerQueueUpdate(
+	ctx context.Context,
+	accountID, clusterName string,
+	cluster *seaplanev1alpha1.Cluster,
+	oldQueueURL, oldRegion string,
+) (validation.ValidationErrors, error) {
+	queueURL, region := clusterTerminationHandlerQueue(cluster)
+	if (queueURL == oldQueueURL && region == oldRegion) || queueURL == "" {
+		return nil, nil
+	}
+
+	existing, err := h.db.ListClusters(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if errs := validation.ValidateSpotTerminationHandlerQueueURL(queueURL, region, terminationHandlerQueueURLs(existing.Items, cluster.Name)); errs != nil {
+		return errs, fmt.Errorf("invalid cluster update")
+	}
+	if _, err := h.db.ClaimSpotTerminationQueue(ctx, accountID, queueURL, clusterName); err != nil {
+		if seaplanedb.IsAlreadyExists(err) {
+			return validation.SpotTerminationHandlerQueueAlreadyInUse(), fmt.Errorf("invalid cluster update")
+		}
+		return nil, err
+	}
+	return nil, nil
 }
 
 func requestedTerminationHandlerQueue(aws *hypershiftv1beta1.AWSPlatformSpec) (queueURL, region string) {
@@ -572,22 +609,6 @@ func terminationHandlerQueueURLs(clusters []seaplanev1alpha1.Cluster, excludeNam
 		}
 	}
 	return queueURLs
-}
-
-func clusterAWSTagsSupplied(rawSpec map[string]any) bool {
-	if _, exists := rawSpec["tags"]; exists {
-		return true
-	}
-	hostedCluster, ok := rawSpec["hostedCluster"].(map[string]any)
-	if !ok {
-		return false
-	}
-	platform, ok := hostedCluster["platform"].(map[string]any)
-	if !ok {
-		return false
-	}
-	_, exists := platform["aws"]
-	return exists
 }
 
 func clusterTagsSupplied(rawSpec map[string]any) bool {

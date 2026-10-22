@@ -83,9 +83,9 @@ func NodePoolResource(nodePool *seaplanev1alpha1.NodePool, cluster *seaplanev1al
 			}
 		}
 		// The worker EC2 instances are created by the NodePool, not the
-		// HostedCluster, so the current cluster tags must be propagated here for
-		// both initial creation and later tag updates.
-		npSpec.Platform.AWS.ResourceTags = appendSystemTags(npSpec.Platform.AWS.ResourceTags, "", cluster.Spec.Tags)
+		// HostedCluster. Inherit Cluster tags, then let NodePool-specific root tags
+		// override matching keys. Direct resourceTags passthrough is not a source.
+		npSpec.Platform.AWS.ResourceTags = appendSystemTags("", mergeNodePoolTags(cluster.Spec.Tags, nodePool.Spec.Tags))
 	}
 
 	return Resource{
@@ -105,6 +105,17 @@ func NodePoolResource(nodePool *seaplanev1alpha1.NodePool, cluster *seaplanev1al
 			Spec: *npSpec,
 		},
 	}, nil
+}
+
+func mergeNodePoolTags(clusterTags, nodePoolTags map[string]string) map[string]string {
+	merged := make(map[string]string, len(clusterTags)+len(nodePoolTags))
+	for key, value := range clusterTags {
+		merged[key] = value
+	}
+	for key, value := range nodePoolTags {
+		merged[key] = value
+	}
+	return merged
 }
 
 // applyUpgradeBudget maps the pool's maxUnavailable/maxSurge onto the

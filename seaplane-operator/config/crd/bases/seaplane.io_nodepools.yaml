@@ -1660,6 +1660,16 @@ spec:
                     - platform
                     - release
                   type: object
+                tags:
+                  additionalProperties:
+                    type: string
+                  description: |-
+                    Tags are customer-defined AWS tags for resources created for this NodePool.
+                    They combine with the parent Cluster's tags, with NodePool values taking
+                    precedence when keys overlap. Reserved system tags share the rendered AWS
+                    resource tag budget.
+                  maxProperties: 25
+                  type: object
               required:
                 - nodePool
               type: object

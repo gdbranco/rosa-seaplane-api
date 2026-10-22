@@ -5,8 +5,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-
-	hypershiftv1beta1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 )
 
 const (
@@ -18,20 +16,13 @@ const (
 )
 
 var (
-	awsResourceTagKeyPattern   = regexp.MustCompile(`^[0-9A-Za-z_.:/=+-@]{1,128}$`)
-	awsResourceTagValuePattern = regexp.MustCompile(`^[0-9A-Za-z_.:/=+-@]{1,256}$`)
+	awsResourceTagKeyPattern   = regexp.MustCompile(`^[\pL\pZ\pN_.:/=+\-@]{1,128}$`)
+	awsResourceTagValuePattern = regexp.MustCompile(`^[\pL\pZ\pN_.:/=+\-@]{1,256}$`)
 )
 
-// ValidateCustomerAWSTags checks the shared Cluster.spec.tags map against the
-// tag constraints that apply to native AWS resourceTags fields.
-func ValidateCustomerAWSTags(tags map[string]string) ValidationErrors {
-	if len(tags) > maxAWSResourceTags-hostedClusterReservedSystemTagCount {
-		return ValidationErrors{&ValidationError{
-			Field:  "spec.tags",
-			Reason: fmt.Sprintf("too many customer AWS tags for the available budget after reserving capacity for system tags; got %d", len(tags)),
-		}}
-	}
-
+// ValidateCustomerAWSTags checks customer tag key and value formats. Budget
+// checks are performed separately using the Cluster and NodePool context.
+func ValidateCustomerAWSTags(tags map[string]string, field string) ValidationErrors {
 	keys := make([]string, 0, len(tags))
 	for key := range tags {
 		keys = append(keys, key)
@@ -44,22 +35,22 @@ func ValidateCustomerAWSTags(tags map[string]string) ValidationErrors {
 		switch {
 		case key == "" || value == "":
 			errs = append(errs, &ValidationError{
-				Field:  "spec.tags",
+				Field:  field,
 				Reason: "tag key and value must not be empty",
 			})
 		case strings.HasPrefix(strings.ToLower(key), "aws:"):
 			errs = append(errs, &ValidationError{
-				Field:  "spec.tags",
+				Field:  field,
 				Reason: fmt.Sprintf("tag key %q uses a prefix reserved for AWS", key),
 			})
 		case !awsResourceTagKeyPattern.MatchString(key):
 			errs = append(errs, &ValidationError{
-				Field:  "spec.tags",
+				Field:  field,
 				Reason: fmt.Sprintf("tag key %q does not match the AWS resource tag key constraints", key),
 			})
 		case !awsResourceTagValuePattern.MatchString(value):
 			errs = append(errs, &ValidationError{
-				Field:  "spec.tags",
+				Field:  field,
 				Reason: fmt.Sprintf("tag value for key %q does not match the AWS resource tag value constraints", key),
 			})
 		}
@@ -67,36 +58,30 @@ func ValidateCustomerAWSTags(tags map[string]string) ValidationErrors {
 	return errs
 }
 
-// ValidateClusterAWSTagBudget validates tags rendered onto the HostedCluster,
-// including tags set through the passthrough platform field and reserved
-// system tags.
-func ValidateClusterAWSTagBudget(customerTags map[string]string, passthroughTags []hypershiftv1beta1.AWSResourceTag) ValidationErrors {
+// ValidateClusterAWSTagBudget validates the root-level customer tags rendered
+// onto the HostedCluster together with capacity reserved for system tags.
+func ValidateClusterAWSTagBudget(customerTags map[string]string) ValidationErrors {
 	count := renderedAWSTagCount(
 		[]string{redHatManagedTagKey, clusterOwnershipBudgetTagKey},
-		passthroughTags,
 		customerTags,
 	)
 	if count <= maxAWSResourceTags {
 		return nil
 	}
 
-	field := "spec.tags"
-	if len(customerTags) == 0 {
-		field = "spec.hostedCluster.platform.aws.resourceTags"
-	}
 	return ValidationErrors{&ValidationError{
-		Field:  field,
+		Field:  "spec.tags",
 		Reason: fmt.Sprintf("rendered AWS resource tags would contain %d entries including reserved system tags; maximum is %d", count, maxAWSResourceTags),
 	}}
 }
 
 // ValidateNodePoolAWSTagBudget validates the inherited Cluster tags and the
 // NodePool-specific tags together with the reserved NodePool system tags.
-func ValidateNodePoolAWSTagBudget(clusterTags map[string]string, nodePoolTags []hypershiftv1beta1.AWSResourceTag, field string) ValidationErrors {
+func ValidateNodePoolAWSTagBudget(clusterTags, nodePoolTags map[string]string, field string) ValidationErrors {
 	count := renderedAWSTagCount(
 		[]string{redHatManagedTagKey},
-		nodePoolTags,
 		clusterTags,
+		nodePoolTags,
 	)
 	if count <= maxAWSResourceTags {
 		return nil
@@ -107,8 +92,12 @@ func ValidateNodePoolAWSTagBudget(clusterTags map[string]string, nodePoolTags []
 	}}
 }
 
-func renderedAWSTagCount(systemTagKeys []string, existing []hypershiftv1beta1.AWSResourceTag, customerTags map[string]string) int {
-	seen := make(map[string]struct{}, len(systemTagKeys)+len(existing)+len(customerTags))
+func renderedAWSTagCount(systemTagKeys []string, customerTagMaps ...map[string]string) int {
+	capacity := len(systemTagKeys)
+	for _, tags := range customerTagMaps {
+		capacity += len(tags)
+	}
+	seen := make(map[string]struct{}, capacity)
 	count := 0
 	add := func(key string) {
 		if _, exists := seen[key]; exists {
@@ -121,11 +110,10 @@ func renderedAWSTagCount(systemTagKeys []string, existing []hypershiftv1beta1.AW
 	for _, key := range systemTagKeys {
 		add(key)
 	}
-	for _, tag := range existing {
-		add(tag.Key)
-	}
-	for key := range customerTags {
-		add(key)
+	for _, tags := range customerTagMaps {
+		for key := range tags {
+			add(key)
+		}
 	}
 	return count
 }

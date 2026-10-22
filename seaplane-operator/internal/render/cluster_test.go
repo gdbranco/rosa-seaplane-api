@@ -684,48 +684,51 @@ func TestHostedClusterCustomerTagsDeterministicOrder(t *testing.T) {
 	}
 }
 
-// Tags set on the HostedCluster passthrough take precedence over a colliding
-// customer tag, since the passthrough is service-set.
-func TestHostedClusterCustomerTagsYieldToPassthroughTags(t *testing.T) {
+// Root-level Cluster tags are the customer source of truth; direct HostedCluster
+// resourceTags passthrough values are not rendered.
+func TestHostedClusterUsesRootTagsInsteadOfPlatformPassthrough(t *testing.T) {
 	cluster := testCluster()
 	cluster.Spec.HostedCluster.Platform.AWS.ResourceTags = []hypershiftv1beta1.AWSResourceTag{
-		{Key: "environment", Value: "service-managed"},
+		{Key: "environment", Value: "passthrough"},
+		{Key: "legacy", Value: "ignored"},
 	}
-	cluster.Spec.Tags = map[string]string{"environment": "customer-set"}
+	cluster.Spec.Tags = map[string]string{"environment": "root", "owner": "team"}
 
 	hc := renderHostedCluster(t, cluster)
 
 	tags := hc.Spec.Platform.AWS.ResourceTags
-	if len(tags) != 3 {
-		t.Fatalf("resourceTags = %v, want 3 entries with no duplicate keys", tags)
+	if len(tags) != 4 {
+		t.Fatalf("resourceTags = %v, want system tags and root-level customer tags only", tags)
 	}
-	if got := tagPairs(tags)["environment"]; got != "service-managed" {
-		t.Errorf("environment = %q, want %q", got, "service-managed")
+	got := tagPairs(tags)
+	if got["environment"] != "root" {
+		t.Errorf("environment = %q, want root-level value %q", got["environment"], "root")
+	}
+	if got["owner"] != "team" {
+		t.Errorf("owner = %q, want root-level value %q", got["owner"], "team")
+	}
+	if _, exists := got["legacy"]; exists {
+		t.Errorf("legacy passthrough tag should not be rendered: %v", got)
 	}
 }
 
-func TestHostedClusterSystemTagsTakePrecedenceOverDuplicatePassthroughTags(t *testing.T) {
+func TestHostedClusterIgnoresPassthroughSystemTags(t *testing.T) {
 	cluster := testCluster()
 	cluster.Spec.HostedCluster.Platform.AWS.ResourceTags = []hypershiftv1beta1.AWSResourceTag{
 		{Key: "red-hat-managed", Value: "false"},
 		{Key: "kubernetes.io/cluster/abc12345", Value: "shared"},
-		{Key: "passthrough", Value: "first"},
-		{Key: "passthrough", Value: "second"},
 	}
 
 	hc := renderHostedCluster(t, cluster)
 	tags := hc.Spec.Platform.AWS.ResourceTags
-	if len(tags) != 3 {
-		t.Fatalf("resourceTags = %v, want system tags and first passthrough value only", tags)
+	if len(tags) != 2 {
+		t.Fatalf("resourceTags = %v, want system tags only", tags)
 	}
 	got := tagPairs(tags)
 	if got["red-hat-managed"] != "true" {
-		t.Errorf("reserved tag value = %q, want true", got["red-hat-managed"])
+		t.Errorf("reserved system tag value = %q, want true", got["red-hat-managed"])
 	}
 	if got["kubernetes.io/cluster/abc12345"] != "owned" {
 		t.Errorf("cluster ownership tag value = %q, want owned", got["kubernetes.io/cluster/abc12345"])
-	}
-	if got["passthrough"] != "first" {
-		t.Errorf("passthrough tag value = %q, want first", got["passthrough"])
 	}
 }

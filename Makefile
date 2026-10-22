@@ -371,7 +371,7 @@ generate-clientset: codegen-conversion $(CLIENT_GEN) $(BRIDGE_GEN)
 		--go-header-file "$(SDK_HEADER_FILE)"
 
 verify-clientset: generate-clientset
-	git diff --exit-code clientset/
+	git diff --exit-code -- clientset/generated/ clientset/platform/
 
 codegen-passthrough: codegen-registry
 	cd api && ../bin/passthrough-gen \

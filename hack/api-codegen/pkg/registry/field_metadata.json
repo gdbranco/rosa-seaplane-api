@@ -1620,6 +1620,12 @@
     "ownerGVK": "seaplane.io/v1alpha1.NodePool"
   },
   {
+    "fieldPath": "spec.tags",
+    "writeMode": "mutable",
+    "ownerType": "NodePool",
+    "ownerGVK": "seaplane.io/v1alpha1.NodePool"
+  },
+  {
     "fieldPath": "aws.ami",
     "writeMode": "mutable",
     "ownerType": "NodePoolPlatform",

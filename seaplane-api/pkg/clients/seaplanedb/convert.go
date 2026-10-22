@@ -51,6 +51,7 @@ func resetSuppliedMaps(dst any, specJSON []byte) error {
 		}
 		var supplied struct {
 			Labels   json.RawMessage `json:"labels"`
+			Tags     json.RawMessage `json:"tags"`
 			NodePool json.RawMessage `json:"nodePool"`
 		}
 		if err := json.Unmarshal(specJSON, &supplied); err != nil {
@@ -58,6 +59,9 @@ func resetSuppliedMaps(dst any, specJSON []byte) error {
 		}
 		if supplied.Labels != nil {
 			spec.Labels = nil
+		}
+		if supplied.Tags != nil {
+			spec.Tags = nil
 		}
 		if supplied.NodePool != nil {
 			var nodePool struct {

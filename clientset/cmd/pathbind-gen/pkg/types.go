@@ -68,6 +68,7 @@ type OverrideAlias struct {
 	Flag        *string  `yaml:"flag"`
 	Description string   `yaml:"description"`
 	Required    *bool    `yaml:"required"`
+	Optional    *bool    `yaml:"optional"`
 	Operations  []string `yaml:"operations"`
 	// Bundle groups this leaf with other fields in generated consumer structs.
 	// The value is the generated field name (for example, "network").
@@ -117,8 +118,10 @@ type MergedAlias struct {
 	Flag        string
 	Description string
 	Required    bool
+	Optional    bool
 	Operations  []string
 	HasFlag     bool
+	FlagSet     bool
 	Resettable  bool
 	// TF-specific:
 	Immutable         bool
@@ -240,34 +243,44 @@ func BuildMergedAliases(draft map[string]DraftField, overrides []OverrideAlias) 
 	}
 
 	out = append(out, mergeConsumerOnlyAliases(overrides)...)
+	for _, alias := range out {
+		if err := validateMergedAlias(alias); err != nil {
+			return nil, err
+		}
+	}
 
 	return out, nil
 }
 
+func validateMergedAlias(alias MergedAlias) error {
+	field := alias.Path
+	if field == "-" {
+		field = alias.GoName
+	}
+	if alias.Required && alias.Optional {
+		return fmt.Errorf("field %s cannot be both required and optional", field)
+	}
+	if alias.Required && alias.Computed {
+		return fmt.Errorf("field %s cannot be both required and computed", field)
+	}
+	hasSchemaMode := alias.Required || alias.Optional || alias.Computed
+	explicitlyHidden := alias.FlagSet && !alias.HasFlag
+	if !hasSchemaMode && !explicitlyHidden {
+		return fmt.Errorf("field %s must be required, optional, or computed unless its flag is explicitly empty", field)
+	}
+	return nil
+}
+
 // mergeDraftField constructs a MergedAlias from a draft field and its optional override.
 func mergeDraftField(df DraftField, ov OverrideAlias, hasOv bool, allDraftPaths []string) (MergedAlias, error) {
-	alias := uniqueAlias(df.Path, allDraftPaths)
-	if hasOv && ov.Alias != "" {
-		alias = ov.Alias
+	if !hasOv {
+		ov = OverrideAlias{}
 	}
 
-	goName := ToPascal(alias)
-	if hasOv && ov.GoName != "" {
-		goName = ov.GoName
-	}
-
-	typ := ""
-	if hasOv && ov.Type != "" {
-		typ = ov.Type
-	}
-	if typ == "" && df.GoType != "" {
-		typ = goTypeToConsumer(df.GoType)
-		if !IsSupportedConsumerType(typ) {
-			return MergedAlias{}, fmt.Errorf("unsupported draft type %q for field %s; add an explicit consumer type override", df.GoType, df.Path)
-		}
-	}
-	if typ == "" {
-		return MergedAlias{}, fmt.Errorf("missing consumer type for field %s; add an explicit consumer type override", df.Path)
+	alias, goName := mergedDraftFieldNames(df, ov, allDraftPaths)
+	typ, err := mergedDraftFieldType(df, ov)
+	if err != nil {
+		return MergedAlias{}, err
 	}
 	elementAttributes, err := mergeObjectElement(df.Path, typ, ov.Element)
 	if err != nil {
@@ -275,43 +288,16 @@ func mergeDraftField(df DraftField, ov OverrideAlias, hasOv bool, allDraftPaths 
 	}
 
 	flag := ToKebab(alias)
-	if hasOv && ov.Flag != nil {
+	if ov.Flag != nil {
 		flag = *ov.Flag
 	}
 
-	description := ""
-	if hasOv {
-		description = ov.Description
-	}
-
-	required := false
-	if hasOv && ov.Required != nil {
-		required = *ov.Required
-	}
-
+	required := boolValueOrDefault(ov.Required, false)
+	computed := boolValueOrDefault(ov.Computed, false)
+	optional := boolValueOrDefault(ov.Optional, !required && !computed)
 	ops := df.Operations
-	if hasOv && len(ov.Operations) > 0 {
+	if len(ov.Operations) > 0 {
 		ops = narrowOperations(df.Operations, ov.Operations)
-	}
-
-	immutable := false
-	if hasOv && ov.Immutable != nil {
-		immutable = *ov.Immutable
-	}
-
-	computed := false
-	if hasOv && ov.Computed != nil {
-		computed = *ov.Computed
-	}
-
-	sensitive := false
-	if hasOv && ov.Sensitive != nil {
-		sensitive = *ov.Sensitive
-	}
-
-	jsonEncoded := false
-	if hasOv && ov.JSONEncoded != nil {
-		jsonEncoded = *ov.JSONEncoded
 	}
 
 	return MergedAlias{
@@ -319,18 +305,53 @@ func mergeDraftField(df DraftField, ov OverrideAlias, hasOv bool, allDraftPaths 
 		Type:              typ,
 		Path:              df.Path,
 		Flag:              flag,
-		Description:       description,
+		Description:       ov.Description,
 		Required:          required,
+		Optional:          optional,
 		Operations:        ops,
 		HasFlag:           flag != "",
+		FlagSet:           ov.Flag != nil,
 		Resettable:        df.Resettable,
-		Immutable:         immutable,
+		Immutable:         boolValueOrDefault(ov.Immutable, false),
 		Computed:          computed,
-		Sensitive:         sensitive,
-		JSONEncoded:       jsonEncoded,
+		Sensitive:         boolValueOrDefault(ov.Sensitive, false),
+		JSONEncoded:       boolValueOrDefault(ov.JSONEncoded, false),
 		Bundle:            ov.Bundle,
 		ElementAttributes: elementAttributes,
 	}, nil
+}
+
+func mergedDraftFieldNames(df DraftField, ov OverrideAlias, allDraftPaths []string) (alias, goName string) {
+	alias = uniqueAlias(df.Path, allDraftPaths)
+	if ov.Alias != "" {
+		alias = ov.Alias
+	}
+	goName = ToPascal(alias)
+	if ov.GoName != "" {
+		goName = ov.GoName
+	}
+	return alias, goName
+}
+
+func mergedDraftFieldType(df DraftField, ov OverrideAlias) (string, error) {
+	if ov.Type != "" {
+		return ov.Type, nil
+	}
+	if df.GoType == "" {
+		return "", fmt.Errorf("missing consumer type for field %s; add an explicit consumer type override", df.Path)
+	}
+	typ := goTypeToConsumer(df.GoType)
+	if !IsSupportedConsumerType(typ) {
+		return "", fmt.Errorf("unsupported draft type %q for field %s; add an explicit consumer type override", df.GoType, df.Path)
+	}
+	return typ, nil
+}
+
+func boolValueOrDefault(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }
 
 func mergeObjectElement(path, typ string, element *OverrideObjectElement) ([]MergedObjectAttribute, error) {
@@ -425,6 +446,11 @@ func mergeConsumerOnlyAliases(overrides []OverrideAlias) []MergedAlias {
 			computed = *ov.Computed
 		}
 
+		optional := !required && !computed
+		if ov.Optional != nil {
+			optional = *ov.Optional
+		}
+
 		sensitive := false
 		if ov.Sensitive != nil {
 			sensitive = *ov.Sensitive
@@ -442,8 +468,10 @@ func mergeConsumerOnlyAliases(overrides []OverrideAlias) []MergedAlias {
 			Flag:        flag,
 			Description: ov.Description,
 			Required:    required,
+			Optional:    optional,
 			Operations:  ov.Operations,
 			HasFlag:     flag != "",
+			FlagSet:     ov.Flag != nil,
 			Immutable:   immutable,
 			Computed:    computed,
 			Sensitive:   sensitive,

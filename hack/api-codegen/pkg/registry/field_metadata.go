@@ -1667,6 +1667,12 @@ var FieldRegistry = TypedFieldRegistry{
 			OwnerType: "NodePool",
 			OwnerGVK:  "seaplane.io/v1alpha1.NodePool",
 		},
+		"spec.tags": {
+			FieldPath: "spec.tags",
+			WriteMode: Mutable,
+			OwnerType: "NodePool",
+			OwnerGVK:  "seaplane.io/v1alpha1.NodePool",
+		},
 	},
 	"NodePoolPlatform": {
 		"aws.ami": {

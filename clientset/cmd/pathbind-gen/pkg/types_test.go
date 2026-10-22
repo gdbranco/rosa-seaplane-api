@@ -119,25 +119,69 @@ func TestBuildMergedAliasesValidationAndConsumerOnly(t *testing.T) {
 		t.Fatal("expected missing consumer type error")
 	}
 	aliases, err := BuildMergedAliases(draft, []OverrideAlias{
-		{Path: "field.string", Alias: "friendlyName", Immutable: boolPtr(true), Computed: boolPtr(true), Sensitive: boolPtr(true), JSONEncoded: boolPtr(true), Operations: []string{"create"}},
+		{Path: "field.string", Alias: "friendlyName", Immutable: boolPtr(true), Computed: boolPtr(true), Optional: boolPtr(true), Sensitive: boolPtr(true), JSONEncoded: boolPtr(true), Operations: []string{"create"}},
 		{Alias: "localOnly", Operations: []string{"create"}, Type: "string", Flag: stringPtr("local-only")},
+		{Alias: "optionalComputed", Operations: []string{"create"}, Type: "bool", Optional: boolPtr(true), Computed: boolPtr(true)},
 		{Alias: "notAnInput", Type: "string"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(aliases) != 2 {
+	if len(aliases) != 3 {
 		t.Fatalf("got %d aliases, want mapped and consumer-only entries", len(aliases))
 	}
 	mapped := aliases[0]
 	if mapped.GoName != "FriendlyName" || mapped.Type != "string" || mapped.Path != "field.string" ||
-		!mapped.Immutable || !mapped.Computed || !mapped.Sensitive || !mapped.JSONEncoded ||
+		!mapped.Immutable || !mapped.Computed || !mapped.Optional || !mapped.Sensitive || !mapped.JSONEncoded ||
 		!reflect.DeepEqual(mapped.Operations, []string{"create"}) {
 		t.Fatalf("unexpected mapped alias: %#v", mapped)
 	}
 	localOnly := aliases[1]
-	if localOnly.GoName != "LocalOnly" || localOnly.Path != "-" || localOnly.Flag != "local-only" {
+	if localOnly.GoName != "LocalOnly" || localOnly.Path != "-" || localOnly.Flag != "local-only" ||
+		!localOnly.Optional || !localOnly.FlagSet {
 		t.Fatalf("unexpected consumer-only alias: %#v", localOnly)
+	}
+	optionalComputed := aliases[2]
+	if optionalComputed.GoName != "OptionalComputed" || optionalComputed.Path != "-" ||
+		!optionalComputed.Optional || !optionalComputed.Computed {
+		t.Fatalf("unexpected optional-computed consumer-only alias: %#v", optionalComputed)
+	}
+
+	for _, override := range [][]OverrideAlias{
+		{{Path: "field.string", Required: boolPtr(true), Optional: boolPtr(true)}},
+		{{Path: "field.string", Required: boolPtr(true), Computed: boolPtr(true)}},
+	} {
+		if _, err := BuildMergedAliases(draft, override); err == nil {
+			t.Errorf("expected incompatible schema flags to be rejected: %#v", override[0])
+		}
+	}
+}
+
+func TestBuildMergedAliasesRequiresSchemaModeOrExplicitEmptyFlag(t *testing.T) {
+	const fieldPath = "field.string"
+	draft := map[string]DraftField{
+		fieldPath: {Path: fieldPath, GoType: "string", Operations: []string{"create"}},
+	}
+	override := OverrideAlias{
+		Path:     fieldPath,
+		Required: boolPtr(false),
+		Optional: boolPtr(false),
+		Computed: boolPtr(false),
+	}
+
+	if _, err := BuildMergedAliases(draft, []OverrideAlias{override}); err == nil ||
+		!strings.Contains(err.Error(), "must be required, optional, or computed") {
+		t.Fatalf("expected invalid schema mode error, got %v", err)
+	}
+
+	override.Flag = stringPtr("")
+	aliases, err := BuildMergedAliases(draft, []OverrideAlias{override})
+	if err != nil {
+		t.Fatalf("explicit empty flag should allow a hidden alias: %v", err)
+	}
+	if len(aliases) != 1 || aliases[0].Required || aliases[0].Optional || aliases[0].Computed ||
+		!aliases[0].FlagSet || aliases[0].HasFlag {
+		t.Fatalf("unexpected explicitly hidden alias: %#v", aliases)
 	}
 }
 

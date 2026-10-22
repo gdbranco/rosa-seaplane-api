@@ -84,11 +84,19 @@ func Run(draftPath, overridesPath, outputDir string) error {
 		if err != nil {
 			return fmt.Errorf("building aliases for %s: %w", resKey, err)
 		}
+		// An explicitly empty flag hides an otherwise optional input from the
+		// Terraform schema while leaving the API field available to other clients.
+		visibleAliases := make([]pkg.MergedAlias, 0, len(aliases))
 		for _, alias := range aliases {
+			if alias.FlagSet && !alias.HasFlag && !alias.Required && !alias.Computed {
+				continue
+			}
 			if _, err := terraformTypeFor(alias.Type); err != nil {
 				return fmt.Errorf("building aliases for %s: field %s: %w", resKey, alias.Path, err)
 			}
+			visibleAliases = append(visibleAliases, alias)
 		}
+		aliases = visibleAliases
 
 		// Categorize fields into create/update
 		createFields, _, _, updateFields, _, _ := pkg.CategorizeAliases(aliases)
@@ -283,11 +291,11 @@ func buildFuncMap() template.FuncMap {
 		// planModifiers generates plan modifiers based on field attributes
 		"planModifiers": func(a pkg.MergedAlias) string {
 			var modifiers []string
-			if a.Immutable {
-				modifiers = append(modifiers, "stringplanmodifier.RequiresReplace()")
-			}
 			if a.Computed {
 				modifiers = append(modifiers, "stringplanmodifier.UseStateForUnknown()")
+			}
+			if a.Immutable {
+				modifiers = append(modifiers, "stringplanmodifier.RequiresReplace()")
 			}
 			return strings.Join(modifiers, ", ")
 		},
@@ -372,11 +380,11 @@ func planModifierField(alias pkg.MergedAlias) string {
 	}
 
 	var modifiers []string
-	if alias.Immutable {
-		modifiers = append(modifiers, modifierPackage+".RequiresReplace()")
-	}
 	if alias.Computed {
 		modifiers = append(modifiers, modifierPackage+".UseStateForUnknown()")
+	}
+	if alias.Immutable {
+		modifiers = append(modifiers, modifierPackage+".RequiresReplace()")
 	}
 	return fmt.Sprintf("PlanModifiers: []planmodifier.%s{%s},", modifierType, strings.Join(modifiers, ", "))
 }
