@@ -555,6 +555,11 @@ resources:
               operations:
                 - create
                 - update
+            - path: spec.tags
+              goType: map
+              operations:
+                - create
+                - update
     oidcConfig:
         sdkType: v1alpha1.OidcConfig
         fields:

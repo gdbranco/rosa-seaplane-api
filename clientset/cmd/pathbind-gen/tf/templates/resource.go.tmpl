@@ -252,11 +252,14 @@ func (r *{{.ResourceName}}Resource) Schema(
 			},
 {{- else}}
 			"{{attrName .}}": schema.{{schemaType .}}Attribute{
-				MarkdownDescription: "{{.GoName}}.",
-{{- if .Computed}}
-				Computed:    true,
-{{- else if .Required}}
+				MarkdownDescription: {{if .Description}}{{printf "%q" .Description}}{{else}}{{printf "%q" (printf "%s." .GoName)}}{{end}},
+{{- if .Required}}
 				Required:    true,
+{{- else if and .Optional .Computed}}
+				Optional:    true,
+				Computed:    true,
+{{- else if .Computed}}
+				Computed:    true,
 {{- else}}
 				Optional:    true,
 {{- end}}
@@ -267,11 +270,11 @@ func (r *{{.ResourceName}}Resource) Schema(
 				ElementType: types.StringType,
 {{- if or .Immutable .Computed}}
 				PlanModifiers: []planmodifier.List{
-{{- if .Immutable}}
-					listplanmodifier.RequiresReplace(),
-{{- end}}
 {{- if .Computed}}
 					listplanmodifier.UseStateForUnknown(),
+{{- end}}
+{{- if .Immutable}}
+					listplanmodifier.RequiresReplace(),
 {{- end}}
 				},
 {{- end}}
@@ -279,33 +282,33 @@ func (r *{{.ResourceName}}Resource) Schema(
 				ElementType: types.StringType,
 {{- if or .Immutable .Computed}}
 				PlanModifiers: []planmodifier.Map{
-{{- if .Immutable}}
-					mapplanmodifier.RequiresReplace(),
-{{- end}}
 {{- if .Computed}}
 					mapplanmodifier.UseStateForUnknown(),
+{{- end}}
+{{- if .Immutable}}
+					mapplanmodifier.RequiresReplace(),
 {{- end}}
 				},
 {{- end}}
 {{- else if eq (schemaType .) "Bool"}}
 {{- if or .Immutable .Computed}}
 				PlanModifiers: []planmodifier.Bool{
-{{- if .Immutable}}
-					boolplanmodifier.RequiresReplace(),
-{{- end}}
 {{- if .Computed}}
 					boolplanmodifier.UseStateForUnknown(),
+{{- end}}
+{{- if .Immutable}}
+					boolplanmodifier.RequiresReplace(),
 {{- end}}
 				},
 {{- end}}
 {{- else if eq (schemaType .) "Int64"}}
 {{- if or .Immutable .Computed}}
 				PlanModifiers: []planmodifier.Int64{
-{{- if .Immutable}}
-					int64planmodifier.RequiresReplace(),
-{{- end}}
 {{- if .Computed}}
 					int64planmodifier.UseStateForUnknown(),
+{{- end}}
+{{- if .Immutable}}
+					int64planmodifier.RequiresReplace(),
 {{- end}}
 				},
 {{- end}}
@@ -324,11 +327,14 @@ func (r *{{.ResourceName}}Resource) Schema(
 				Attributes: map[string]schema.Attribute{
 {{- range .Fields}}
 					"{{attrName .}}": schema.{{schemaType .}}Attribute{
-						MarkdownDescription: "{{.GoName}}.",
-{{- if .Computed}}
-						Computed: true,
-{{- else if .Required}}
+						MarkdownDescription: {{if .Description}}{{printf "%q" .Description}}{{else}}{{printf "%q" (printf "%s." .GoName)}}{{end}},
+{{- if .Required}}
 						Required: true,
+{{- else if and .Optional .Computed}}
+						Optional: true,
+						Computed: true,
+{{- else if .Computed}}
+						Computed: true,
 {{- else}}
 						Optional: true,
 {{- end}}

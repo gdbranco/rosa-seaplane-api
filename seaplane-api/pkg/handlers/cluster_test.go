@@ -1298,12 +1298,9 @@ func TestClusterHandler_Update_RejectsTagsExceedingNodePoolBudget(t *testing.T) 
 	nodePool := testNodePoolCR("test-cluster.workers", testAccountID)
 	nodePool.Labels[clusterUIDLabel] = string(cluster.UID)
 	nodePool.Spec.NodePool.ClusterName = cluster.Name
-	nodePool.Spec.NodePool.Platform = hypershiftv1beta1.NodePoolPlatform{
-		Type: hypershiftv1beta1.AWSPlatform,
-		AWS: &hypershiftv1beta1.AWSNodePoolPlatform{ResourceTags: []hypershiftv1beta1.AWSResourceTag{
-			{Key: "pool-one", Value: "value"},
-			{Key: "pool-two", Value: "value"},
-		}},
+	nodePool.Spec.Tags = map[string]string{
+		"pool-one": "value",
+		"pool-two": "value",
 	}
 	scheme := newTestScheme()
 	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, nodePool).Build()

@@ -423,8 +423,16 @@ func TestNodePoolInheritsClusterCustomerTags(t *testing.T) {
 		"cost-center": "cc-1234",
 		"environment": "production",
 	}
+	nodePool := testNodePool()
+	nodePool.Spec.Tags = map[string]string{
+		"environment": "staging",
+		"team":        "workers",
+	}
+	nodePool.Spec.NodePool.Platform.AWS.ResourceTags = []hypershiftv1beta1.AWSResourceTag{
+		{Key: "legacy", Value: "ignored"},
+	}
 
-	resource, err := NodePoolResource(testNodePool(), cluster)
+	resource, err := NodePoolResource(nodePool, cluster)
 	if err != nil {
 		t.Fatalf("NodePoolResource: %v", err)
 	}
@@ -434,8 +442,17 @@ func TestNodePoolInheritsClusterCustomerTags(t *testing.T) {
 	if got["cost-center"] != "cc-1234" {
 		t.Errorf("cost-center = %q, want %q", got["cost-center"], "cc-1234")
 	}
-	if got["environment"] != "production" {
-		t.Errorf("environment = %q, want %q", got["environment"], "production")
+	if got["environment"] != "staging" {
+		t.Errorf("environment = %q, want NodePool override %q", got["environment"], "staging")
+	}
+	if got["team"] != "workers" {
+		t.Errorf("team = %q, want %q", got["team"], "workers")
+	}
+	if len(got) != 4 {
+		t.Errorf("resourceTags = %v, want inherited, NodePool, and system tags only", got)
+	}
+	if _, exists := got["legacy"]; exists {
+		t.Errorf("direct resourceTags passthrough should not be rendered: %v", got)
 	}
 	if got["red-hat-managed"] != "true" {
 		t.Errorf("red-hat-managed = %q, want %q", got["red-hat-managed"], "true")

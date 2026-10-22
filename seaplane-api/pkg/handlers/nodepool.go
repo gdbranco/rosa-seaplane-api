@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
-	hypershiftv1beta1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
@@ -68,20 +67,8 @@ func validateNodePoolEC2InstanceMetadataHttpTokens(value public.EC2InstanceMetad
 	}
 }
 
-func nodePoolAWSTagsSupplied(rawSpec map[string]any) bool {
-	nodePool, ok := rawSpec["nodePool"].(map[string]any)
-	if !ok {
-		return false
-	}
-	platform, ok := nodePool["platform"].(map[string]any)
-	if !ok {
-		return false
-	}
-	aws, ok := platform["aws"].(map[string]any)
-	if !ok {
-		return false
-	}
-	_, exists := aws["resourceTags"]
+func nodePoolTagsSupplied(rawSpec map[string]any) bool {
+	_, exists := rawSpec["tags"]
 	return exists
 }
 
@@ -226,6 +213,7 @@ func (h *NodePoolHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	errs := append(h.validator.ValidateCreate(&req.Spec, featuregate.Default), validateNodePoolReplicas(&req.Spec)...)
+	errs = append(errs, validation.ValidateCustomerAWSTags(req.Spec.Tags, "spec.tags")...)
 	errs = append(errs, validateNodePoolEC2InstanceMetadataHttpTokens(req.Spec.EC2InstanceMetadataHttpTokens)...)
 	if len(errs) > 0 {
 		writeAPIError(w, ErrNodePoolValidation.WithErrors(errs), h.logger)
@@ -246,11 +234,7 @@ func (h *NodePoolHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, ErrNodePoolCreateClusterDeleting, h.logger)
 		return
 	}
-	var nodePoolTags []hypershiftv1beta1.AWSResourceTag
-	if req.Spec.NodePool.Platform.AWS != nil {
-		nodePoolTags = req.Spec.NodePool.Platform.AWS.ResourceTags
-	}
-	if errs := validation.ValidateNodePoolAWSTagBudget(cluster.Spec.Tags, nodePoolTags, "spec.nodePool.platform.aws.resourceTags"); len(errs) > 0 {
+	if errs := validation.ValidateNodePoolAWSTagBudget(cluster.Spec.Tags, req.Spec.Tags, "spec.tags"); len(errs) > 0 {
 		writeAPIError(w, ErrNodePoolValidation.WithErrors(errs), h.logger)
 		return
 	}
@@ -366,13 +350,18 @@ func (h *NodePoolHandler) Update(w http.ResponseWriter, r *http.Request) {
 			mergeErr = err
 			return fmt.Errorf("merge nodepool spec: %w", err)
 		}
-		if nodePoolAWSTagsSupplied(rawSpec) {
+		if nodePoolTagsSupplied(rawSpec) {
+			tagErrs := validation.ValidateCustomerAWSTags(current.Spec.Tags, "spec.tags")
+			if len(tagErrs) > 0 {
+				validationErr = tagErrs
+				return fmt.Errorf("invalid nodepool AWS tags")
+			}
 			clusterName := current.Spec.NodePool.ClusterName
 			if clusterName == "" {
 				clusterName, _, err = validation.ParseNodePoolName(current.Name)
 				if err != nil {
 					validationErr = validation.ValidationErrors{&validation.ValidationError{
-						Field:  "spec.nodePool.platform.aws.resourceTags",
+						Field:  "spec.tags",
 						Reason: "unable to resolve the parent Cluster for tag budget validation",
 					}}
 					return fmt.Errorf("invalid nodepool AWS tags")
@@ -382,18 +371,14 @@ func (h *NodePoolHandler) Update(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				if seaplanedb.IsNotFound(err) {
 					validationErr = validation.ValidationErrors{&validation.ValidationError{
-						Field:  "spec.nodePool.platform.aws.resourceTags",
+						Field:  "spec.tags",
 						Reason: "parent Cluster must be available for tag budget validation",
 					}}
 					return fmt.Errorf("invalid nodepool AWS tags")
 				}
 				return fmt.Errorf("get parent Cluster for tag budget validation: %w", err)
 			}
-			var nodePoolTags []hypershiftv1beta1.AWSResourceTag
-			if current.Spec.NodePool.Platform.AWS != nil {
-				nodePoolTags = current.Spec.NodePool.Platform.AWS.ResourceTags
-			}
-			if errs := validation.ValidateNodePoolAWSTagBudget(cluster.Spec.Tags, nodePoolTags, "spec.nodePool.platform.aws.resourceTags"); len(errs) > 0 {
+			if errs := validation.ValidateNodePoolAWSTagBudget(cluster.Spec.Tags, current.Spec.Tags, "spec.tags"); len(errs) > 0 {
 				validationErr = errs
 				return fmt.Errorf("invalid nodepool AWS tags")
 			}

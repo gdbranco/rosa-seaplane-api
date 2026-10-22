@@ -68,6 +68,7 @@ type OverrideAlias struct {
 	Flag        *string  `yaml:"flag"`
 	Description string   `yaml:"description"`
 	Required    *bool    `yaml:"required"`
+	Optional    *bool    `yaml:"optional"`
 	Operations  []string `yaml:"operations"`
 	// Bundle groups this leaf with other fields in generated consumer structs.
 	// The value is the generated field name (for example, "network").
@@ -117,8 +118,10 @@ type MergedAlias struct {
 	Flag        string
 	Description string
 	Required    bool
+	Optional    bool
 	Operations  []string
 	HasFlag     bool
+	FlagSet     bool
 	Resettable  bool
 	// TF-specific:
 	Immutable         bool
@@ -240,8 +243,27 @@ func BuildMergedAliases(draft map[string]DraftField, overrides []OverrideAlias) 
 	}
 
 	out = append(out, mergeConsumerOnlyAliases(overrides)...)
+	for _, alias := range out {
+		if err := validateMergedAlias(alias); err != nil {
+			return nil, err
+		}
+	}
 
 	return out, nil
+}
+
+func validateMergedAlias(alias MergedAlias) error {
+	field := alias.Path
+	if field == "-" {
+		field = alias.GoName
+	}
+	if alias.Required && alias.Optional {
+		return fmt.Errorf("field %s cannot be both required and optional", field)
+	}
+	if alias.Required && alias.Computed {
+		return fmt.Errorf("field %s cannot be both required and computed", field)
+	}
+	return nil
 }
 
 // mergeDraftField constructs a MergedAlias from a draft field and its optional override.
@@ -304,6 +326,11 @@ func mergeDraftField(df DraftField, ov OverrideAlias, hasOv bool, allDraftPaths 
 		computed = *ov.Computed
 	}
 
+	optional := !required && !computed
+	if hasOv && ov.Optional != nil {
+		optional = *ov.Optional
+	}
+
 	sensitive := false
 	if hasOv && ov.Sensitive != nil {
 		sensitive = *ov.Sensitive
@@ -321,8 +348,10 @@ func mergeDraftField(df DraftField, ov OverrideAlias, hasOv bool, allDraftPaths 
 		Flag:              flag,
 		Description:       description,
 		Required:          required,
+		Optional:          optional,
 		Operations:        ops,
 		HasFlag:           flag != "",
+		FlagSet:           hasOv && ov.Flag != nil,
 		Resettable:        df.Resettable,
 		Immutable:         immutable,
 		Computed:          computed,
@@ -425,6 +454,11 @@ func mergeConsumerOnlyAliases(overrides []OverrideAlias) []MergedAlias {
 			computed = *ov.Computed
 		}
 
+		optional := !required && !computed
+		if ov.Optional != nil {
+			optional = *ov.Optional
+		}
+
 		sensitive := false
 		if ov.Sensitive != nil {
 			sensitive = *ov.Sensitive
@@ -442,8 +476,10 @@ func mergeConsumerOnlyAliases(overrides []OverrideAlias) []MergedAlias {
 			Flag:        flag,
 			Description: ov.Description,
 			Required:    required,
+			Optional:    optional,
 			Operations:  ov.Operations,
 			HasFlag:     flag != "",
+			FlagSet:     ov.Flag != nil,
 			Immutable:   immutable,
 			Computed:    computed,
 			Sensitive:   sensitive,

@@ -268,12 +268,8 @@ func (h *ClusterHandler) decodeClusterCreateRequest(accountID string, body []byt
 		return nil, &ErrClusterCreateNamespaceMismatch
 	}
 	errs := h.validator.ValidateCreate(&req.Spec, featuregate.Default)
-	errs = append(errs, validation.ValidateCustomerAWSTags(req.Spec.Tags)...)
-	var platformTags []hypershiftv1beta1.AWSResourceTag
-	if req.Spec.HostedCluster.Platform.AWS != nil {
-		platformTags = req.Spec.HostedCluster.Platform.AWS.ResourceTags
-	}
-	errs = append(errs, validation.ValidateClusterAWSTagBudget(req.Spec.Tags, platformTags)...)
+	errs = append(errs, validation.ValidateCustomerAWSTags(req.Spec.Tags, "spec.tags")...)
+	errs = append(errs, validation.ValidateClusterAWSTagBudget(req.Spec.Tags)...)
 	if len(errs) > 0 {
 		apiErr := ErrClusterValidation.WithErrors(errs)
 		return nil, &apiErr
@@ -452,43 +448,30 @@ func (h *ClusterHandler) Update(w http.ResponseWriter, r *http.Request) {
 			mergeErr = err
 			return err
 		}
-		if clusterAWSTagsSupplied(rawSpec) {
-			tagErrs := validation.ValidateCustomerAWSTags(current.Spec.Tags)
-			var platformTags []hypershiftv1beta1.AWSResourceTag
-			if current.Spec.HostedCluster.Platform.AWS != nil {
-				platformTags = current.Spec.HostedCluster.Platform.AWS.ResourceTags
-			}
-			tagErrs = append(tagErrs, validation.ValidateClusterAWSTagBudget(
-				current.Spec.Tags,
-				platformTags,
-			)...)
+		if clusterTagsSupplied(rawSpec) {
+			tagErrs := validation.ValidateCustomerAWSTags(current.Spec.Tags, "spec.tags")
+			tagErrs = append(tagErrs, validation.ValidateClusterAWSTagBudget(current.Spec.Tags)...)
 			if len(tagErrs) > 0 {
 				validationErr = tagErrs
 				return fmt.Errorf("invalid cluster AWS tags")
 			}
-			if clusterTagsSupplied(rawSpec) {
-				nodePools, err := h.db.ListNodePools(ctx, accountID, string(current.UID))
-				if err != nil {
-					return fmt.Errorf("list NodePools for AWS tag validation: %w", err)
+			nodePools, err := h.db.ListNodePools(ctx, accountID, string(current.UID))
+			if err != nil {
+				return fmt.Errorf("list NodePools for AWS tag validation: %w", err)
+			}
+			for i := range nodePools.Items {
+				nodePool := &nodePools.Items[i]
+				if nodePool.Spec.NodePool.ClusterName != current.Name && !strings.HasPrefix(nodePool.Name, current.Name+".") {
+					continue
 				}
-				for i := range nodePools.Items {
-					nodePool := &nodePools.Items[i]
-					if nodePool.Spec.NodePool.ClusterName != current.Name && !strings.HasPrefix(nodePool.Name, current.Name+".") {
-						continue
-					}
-					var nodePoolTags []hypershiftv1beta1.AWSResourceTag
-					if nodePool.Spec.NodePool.Platform.AWS != nil {
-						nodePoolTags = nodePool.Spec.NodePool.Platform.AWS.ResourceTags
-					}
-					nodePoolErrs := validation.ValidateNodePoolAWSTagBudget(current.Spec.Tags, nodePoolTags, "spec.tags")
-					for _, tagErr := range nodePoolErrs {
-						tagErr.Reason = fmt.Sprintf("NodePool %q: %s", nodePool.Name, tagErr.Reason)
-					}
-					validationErr = append(validationErr, nodePoolErrs...)
+				nodePoolErrs := validation.ValidateNodePoolAWSTagBudget(current.Spec.Tags, nodePool.Spec.Tags, "spec.tags")
+				for _, tagErr := range nodePoolErrs {
+					tagErr.Reason = fmt.Sprintf("NodePool %q: %s", nodePool.Name, tagErr.Reason)
 				}
-				if len(validationErr) > 0 {
-					return fmt.Errorf("invalid cluster AWS tags for existing NodePools")
-				}
+				validationErr = append(validationErr, nodePoolErrs...)
+			}
+			if len(validationErr) > 0 {
+				return fmt.Errorf("invalid cluster AWS tags for existing NodePools")
 			}
 		}
 		queueURL, region := clusterTerminationHandlerQueue(current)
@@ -572,22 +555,6 @@ func terminationHandlerQueueURLs(clusters []seaplanev1alpha1.Cluster, excludeNam
 		}
 	}
 	return queueURLs
-}
-
-func clusterAWSTagsSupplied(rawSpec map[string]any) bool {
-	if _, exists := rawSpec["tags"]; exists {
-		return true
-	}
-	hostedCluster, ok := rawSpec["hostedCluster"].(map[string]any)
-	if !ok {
-		return false
-	}
-	platform, ok := hostedCluster["platform"].(map[string]any)
-	if !ok {
-		return false
-	}
-	_, exists := platform["aws"]
-	return exists
 }
 
 func clusterTagsSupplied(rawSpec map[string]any) bool {
