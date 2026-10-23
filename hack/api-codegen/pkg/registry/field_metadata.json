@@ -31,7 +31,8 @@
   },
   {
     "fieldPath": "resourceTags",
-    "writeMode": "mutable",
+    "writeMode": "service-set",
+    "hidden": true,
     "ownerType": "AWSNodePoolPlatform",
     "ownerGVK": ""
   },
@@ -75,6 +76,67 @@
     "fieldPath": "subnet",
     "writeMode": "mutable",
     "ownerType": "AWSNodePoolPlatform",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "additionalAllowedPrincipals",
+    "writeMode": "mutable",
+    "ownerType": "AWSPlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "cloudProviderConfig",
+    "writeMode": "mutable",
+    "ownerType": "AWSPlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "endpointAccess",
+    "writeMode": "mutable",
+    "ownerType": "AWSPlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "multiArch",
+    "writeMode": "mutable",
+    "ownerType": "AWSPlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "region",
+    "writeMode": "mutable",
+    "ownerType": "AWSPlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "resourceTags",
+    "writeMode": "service-set",
+    "hidden": true,
+    "ownerType": "AWSPlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "rolesRef",
+    "writeMode": "mutable",
+    "ownerType": "AWSPlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "serviceEndpoints",
+    "writeMode": "mutable",
+    "ownerType": "AWSPlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "sharedVPC",
+    "writeMode": "mutable",
+    "ownerType": "AWSPlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "terminationHandlerQueueURL",
+    "writeMode": "mutable",
+    "ownerType": "AWSPlatformSpec",
     "ownerGVK": ""
   },
   {
@@ -657,7 +719,62 @@
     "ownerGVK": "seaplane.io/v1alpha1.Cluster"
   },
   {
-    "fieldPath": "spec.hostedCluster.platform.aws",
+    "fieldPath": "spec.hostedCluster.platform.aws.additionalAllowedPrincipals",
+    "writeMode": "mutable",
+    "ownerType": "Cluster",
+    "ownerGVK": "seaplane.io/v1alpha1.Cluster"
+  },
+  {
+    "fieldPath": "spec.hostedCluster.platform.aws.cloudProviderConfig",
+    "writeMode": "mutable",
+    "ownerType": "Cluster",
+    "ownerGVK": "seaplane.io/v1alpha1.Cluster"
+  },
+  {
+    "fieldPath": "spec.hostedCluster.platform.aws.endpointAccess",
+    "writeMode": "mutable",
+    "ownerType": "Cluster",
+    "ownerGVK": "seaplane.io/v1alpha1.Cluster"
+  },
+  {
+    "fieldPath": "spec.hostedCluster.platform.aws.multiArch",
+    "writeMode": "mutable",
+    "ownerType": "Cluster",
+    "ownerGVK": "seaplane.io/v1alpha1.Cluster"
+  },
+  {
+    "fieldPath": "spec.hostedCluster.platform.aws.region",
+    "writeMode": "mutable",
+    "ownerType": "Cluster",
+    "ownerGVK": "seaplane.io/v1alpha1.Cluster"
+  },
+  {
+    "fieldPath": "spec.hostedCluster.platform.aws.resourceTags",
+    "writeMode": "service-set",
+    "hidden": true,
+    "ownerType": "Cluster",
+    "ownerGVK": "seaplane.io/v1alpha1.Cluster"
+  },
+  {
+    "fieldPath": "spec.hostedCluster.platform.aws.rolesRef",
+    "writeMode": "mutable",
+    "ownerType": "Cluster",
+    "ownerGVK": "seaplane.io/v1alpha1.Cluster"
+  },
+  {
+    "fieldPath": "spec.hostedCluster.platform.aws.serviceEndpoints",
+    "writeMode": "mutable",
+    "ownerType": "Cluster",
+    "ownerGVK": "seaplane.io/v1alpha1.Cluster"
+  },
+  {
+    "fieldPath": "spec.hostedCluster.platform.aws.sharedVPC",
+    "writeMode": "mutable",
+    "ownerType": "Cluster",
+    "ownerGVK": "seaplane.io/v1alpha1.Cluster"
+  },
+  {
+    "fieldPath": "spec.hostedCluster.platform.aws.terminationHandlerQueueURL",
     "writeMode": "mutable",
     "ownerType": "Cluster",
     "ownerGVK": "seaplane.io/v1alpha1.Cluster"
@@ -1541,7 +1658,8 @@
   },
   {
     "fieldPath": "spec.nodePool.platform.aws.resourceTags",
-    "writeMode": "mutable",
+    "writeMode": "service-set",
+    "hidden": true,
     "ownerType": "NodePool",
     "ownerGVK": "seaplane.io/v1alpha1.NodePool"
   },
@@ -1657,7 +1775,8 @@
   },
   {
     "fieldPath": "aws.resourceTags",
-    "writeMode": "mutable",
+    "writeMode": "service-set",
+    "hidden": true,
     "ownerType": "NodePoolPlatform",
     "ownerGVK": ""
   },
@@ -1741,7 +1860,62 @@
     "ownerGVK": "seaplane.io/v1alpha1.OidcConfig"
   },
   {
-    "fieldPath": "aws",
+    "fieldPath": "aws.additionalAllowedPrincipals",
+    "writeMode": "mutable",
+    "ownerType": "PlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "aws.cloudProviderConfig",
+    "writeMode": "mutable",
+    "ownerType": "PlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "aws.endpointAccess",
+    "writeMode": "mutable",
+    "ownerType": "PlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "aws.multiArch",
+    "writeMode": "mutable",
+    "ownerType": "PlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "aws.region",
+    "writeMode": "mutable",
+    "ownerType": "PlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "aws.resourceTags",
+    "writeMode": "service-set",
+    "hidden": true,
+    "ownerType": "PlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "aws.rolesRef",
+    "writeMode": "mutable",
+    "ownerType": "PlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "aws.serviceEndpoints",
+    "writeMode": "mutable",
+    "ownerType": "PlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "aws.sharedVPC",
+    "writeMode": "mutable",
+    "ownerType": "PlatformSpec",
+    "ownerGVK": ""
+  },
+  {
+    "fieldPath": "aws.terminationHandlerQueueURL",
     "writeMode": "mutable",
     "ownerType": "PlatformSpec",
     "ownerGVK": ""

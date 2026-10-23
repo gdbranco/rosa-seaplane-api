@@ -303,11 +303,6 @@ resources:
               operations:
                 - create
                 - update
-            - path: spec.hostedCluster.platform.aws.resourceTags
-              goType: array(object)
-              operations:
-                - create
-                - update
             - path: spec.hostedCluster.platform.aws.rolesRef.controlPlaneOperatorARN
               goType: string
               operations:
@@ -503,11 +498,6 @@ resources:
                 - update
             - path: spec.nodePool.platform.aws.placement.tenancy
               goType: string
-              operations:
-                - create
-                - update
-            - path: spec.nodePool.platform.aws.resourceTags
-              goType: array(object)
               operations:
                 - create
                 - update

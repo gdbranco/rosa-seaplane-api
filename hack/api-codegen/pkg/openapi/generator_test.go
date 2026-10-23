@@ -36,6 +36,111 @@ func TestFilterHiddenFieldsRetainsMutableNodePoolLabelsAndTaints(t *testing.T) {
 	}
 }
 
+func TestFilterHiddenFieldsRemovesAWSTagPassthroughs(t *testing.T) {
+	object := func(properties map[string]apiextensionsv1.JSONSchemaProps) apiextensionsv1.JSONSchemaProps {
+		return apiextensionsv1.JSONSchemaProps{Type: "object", Properties: properties}
+	}
+	stringField := apiextensionsv1.JSONSchemaProps{Type: "string"}
+	resourceTags := apiextensionsv1.JSONSchemaProps{Type: "array"}
+	definitions := map[string]apiextensionsv1.JSONSchemaProps{
+		"PlatformSpec": object(map[string]apiextensionsv1.JSONSchemaProps{
+			"aws": object(map[string]apiextensionsv1.JSONSchemaProps{
+				"region": stringField, "resourceTags": resourceTags,
+			}),
+		}),
+		"AWSPlatformSpec": object(map[string]apiextensionsv1.JSONSchemaProps{
+			"region": stringField, "resourceTags": resourceTags,
+		}),
+		"NodePoolPlatform": object(map[string]apiextensionsv1.JSONSchemaProps{
+			"aws": object(map[string]apiextensionsv1.JSONSchemaProps{"resourceTags": resourceTags}),
+		}),
+		"AWSNodePoolPlatform": object(map[string]apiextensionsv1.JSONSchemaProps{"resourceTags": resourceTags}),
+	}
+
+	if err := filterHiddenFields(definitions); err != nil {
+		t.Fatalf("filterHiddenFields(): %v", err)
+	}
+	for _, test := range []struct {
+		definition string
+		path       []string
+	}{
+		{definition: "PlatformSpec", path: []string{"aws"}},
+		{definition: "AWSPlatformSpec"},
+		{definition: "NodePoolPlatform", path: []string{"aws"}},
+		{definition: "AWSNodePoolPlatform"},
+	} {
+		schema := definitions[test.definition]
+		for _, name := range test.path {
+			property, found := schema.Properties[name]
+			if !found {
+				t.Fatalf("definition %s is missing path %v", test.definition, test.path)
+			}
+			schema = property
+		}
+		if _, found := schema.Properties["resourceTags"]; found {
+			t.Errorf("resourceTags remains visible in %s at path %v", test.definition, test.path)
+		}
+	}
+}
+
+func TestFilterHiddenFieldsPrunesResourceTagsFromResourceLists(t *testing.T) {
+	object := func(properties map[string]apiextensionsv1.JSONSchemaProps) apiextensionsv1.JSONSchemaProps {
+		return apiextensionsv1.JSONSchemaProps{Type: "object", Properties: properties}
+	}
+	resourceTags := apiextensionsv1.JSONSchemaProps{Type: "array"}
+	var objectAtPath func([]string) apiextensionsv1.JSONSchemaProps
+	objectAtPath = func(path []string) apiextensionsv1.JSONSchemaProps {
+		if len(path) == 0 {
+			return object(map[string]apiextensionsv1.JSONSchemaProps{"resourceTags": resourceTags})
+		}
+		return object(map[string]apiextensionsv1.JSONSchemaProps{path[0]: objectAtPath(path[1:])})
+	}
+	list := func(item apiextensionsv1.JSONSchemaProps) apiextensionsv1.JSONSchemaProps {
+		return object(map[string]apiextensionsv1.JSONSchemaProps{
+			"items": {
+				Type:  "array",
+				Items: &apiextensionsv1.JSONSchemaPropsOrArray{Schema: &item},
+			},
+		})
+	}
+	definitions := map[string]apiextensionsv1.JSONSchemaProps{
+		"Cluster":      objectAtPath([]string{"spec", "hostedCluster", "platform", "aws"}),
+		"ClusterList":  list(objectAtPath([]string{"spec", "hostedCluster", "platform", "aws"})),
+		"NodePool":     objectAtPath([]string{"spec", "nodePool", "platform", "aws"}),
+		"NodePoolList": list(objectAtPath([]string{"spec", "nodePool", "platform", "aws"})),
+	}
+
+	if err := filterHiddenFields(definitions); err != nil {
+		t.Fatalf("filterHiddenFields(): %v", err)
+	}
+	assertHidden := func(name string, schema apiextensionsv1.JSONSchemaProps, path ...string) {
+		t.Helper()
+		for _, segment := range path {
+			property, found := schema.Properties[segment]
+			if !found {
+				t.Fatalf("definition %s is missing path %v", name, path)
+			}
+			schema = property
+		}
+		if _, found := schema.Properties["resourceTags"]; found {
+			t.Errorf("resourceTags remains visible in %s at path %v", name, path)
+		}
+	}
+	assertHidden("Cluster", definitions["Cluster"], "spec", "hostedCluster", "platform", "aws")
+	assertHidden("NodePool", definitions["NodePool"], "spec", "nodePool", "platform", "aws")
+	for _, listName := range []string{"ClusterList", "NodePoolList"} {
+		items := definitions[listName].Properties["items"]
+		if items.Items == nil || items.Items.Schema == nil {
+			t.Fatalf("definition %s has no inline item schema", listName)
+		}
+		if listName == "ClusterList" {
+			assertHidden(listName, *items.Items.Schema, "spec", "hostedCluster", "platform", "aws")
+		} else {
+			assertHidden(listName, *items.Items.Schema, "spec", "nodePool", "platform", "aws")
+		}
+	}
+}
+
 func TestConfigurationUsesLocalType(t *testing.T) {
 	output := generateConfigurationSchema(t)
 

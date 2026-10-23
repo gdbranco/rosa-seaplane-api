@@ -634,7 +634,7 @@ func TestFlatten_ClusterDirectMappings(t *testing.T) {
 	cluster := &v1alpha1.Cluster{}
 	cluster.Name = "my-cluster"
 	cluster.Spec.HostedCluster.Release.Image = "quay.io/openshift-release-dev/ocp-release:4.18.0"
-	cluster.Spec.HostedCluster.Platform.AWS = &hypershiftv1beta1.AWSPlatformSpec{
+	cluster.Spec.HostedCluster.Platform.AWS = &v1alpha1.AWSPlatformSpec{
 		Region: "us-east-1",
 		CloudProviderConfig: &hypershiftv1beta1.AWSCloudProviderConfig{
 			VPC:    "vpc-abc123",
@@ -755,29 +755,25 @@ func TestExpand_SliceFromJSONString(t *testing.T) {
 }
 
 // TestExpand_SliceOfStructFromJSONString verifies that a consumer string field
-// holding a JSON array of objects is unmarshaled into the SDK slice of structs.
-// e.g. resourceTags: []AWSResourceTag{Key, Value}
+// holding a JSON array of objects is unmarshaled into a supported NodePool slice.
 func TestExpand_SliceOfStructFromJSONString(t *testing.T) {
 	ctx := context.Background()
 	input := struct {
-		Tags string `hfsdk:"spec.hostedCluster.platform.aws.resourceTags"`
+		Config string `hfsdk:"spec.nodePool.config"`
 	}{
-		Tags: `[{"key":"env","value":"prod"},{"key":"team","value":"platform"}]`,
+		Config: `[{"name":"shared-config"}]`,
 	}
 
-	cluster := &v1alpha1.Cluster{}
-	if err := pathbind.Expand(ctx, input, cluster); err != nil {
+	nodePool := &v1alpha1.NodePool{}
+	if err := pathbind.Expand(ctx, input, nodePool); err != nil {
 		t.Fatalf("Expand: %v", err)
 	}
-	if cluster.Spec.HostedCluster.Platform.AWS == nil {
-		t.Fatal("AWS should have been allocated")
+	config := nodePool.Spec.NodePool.Config
+	if len(config) != 1 {
+		t.Fatalf("Config: got %d entries, want 1", len(config))
 	}
-	tags := cluster.Spec.HostedCluster.Platform.AWS.ResourceTags
-	if len(tags) != 2 {
-		t.Fatalf("ResourceTags: got %d entries, want 2", len(tags))
-	}
-	if tags[0].Key != "env" {
-		t.Errorf("tags[0].Key: got %q, want %q", tags[0].Key, "env")
+	if config[0].Name != "shared-config" {
+		t.Errorf("config[0].Name: got %q, want %q", config[0].Name, "shared-config")
 	}
 }
 
@@ -806,7 +802,7 @@ func TestExpand_SliceDirectAssignment(t *testing.T) {
 func TestFlatten_SliceToJSONString(t *testing.T) {
 	ctx := context.Background()
 	cluster := &v1alpha1.Cluster{}
-	cluster.Spec.HostedCluster.Platform.AWS = &hypershiftv1beta1.AWSPlatformSpec{
+	cluster.Spec.HostedCluster.Platform.AWS = &v1alpha1.AWSPlatformSpec{
 		AdditionalAllowedPrincipals: []string{
 			"arn:aws:iam::123:role/role-a",
 			"arn:aws:iam::123:role/role-b",
@@ -830,21 +826,21 @@ func TestFlatten_SliceToJSONString(t *testing.T) {
 func TestRoundTrip_SliceField(t *testing.T) {
 	ctx := context.Background()
 	type input struct {
-		Tags string `hfsdk:"spec.hostedCluster.platform.aws.resourceTags"`
+		Config string `hfsdk:"spec.nodePool.config"`
 	}
-	original := `[{"key":"env","value":"prod"}]`
+	original := `[{"name":"shared-config"}]`
 
-	cluster := &v1alpha1.Cluster{}
-	if err := pathbind.Expand(ctx, input{Tags: original}, cluster); err != nil {
+	nodePool := &v1alpha1.NodePool{}
+	if err := pathbind.Expand(ctx, input{Config: original}, nodePool); err != nil {
 		t.Fatalf("Expand: %v", err)
 	}
 
 	out := &input{}
-	if err := pathbind.Flatten(ctx, cluster, out); err != nil {
+	if err := pathbind.Flatten(ctx, nodePool, out); err != nil {
 		t.Fatalf("Flatten: %v", err)
 	}
-	if out.Tags != original {
-		t.Errorf("round-trip: got %q, want %q", out.Tags, original)
+	if out.Config != original {
+		t.Errorf("round-trip: got %q, want %q", out.Config, original)
 	}
 }
 

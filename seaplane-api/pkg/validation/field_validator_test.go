@@ -132,6 +132,74 @@ func TestValidateCreate_AllowsMutableFieldsInsideServiceSetContainer(t *testing.
 	}
 }
 
+func TestValidateResourceTagsPassthroughIsServiceSet(t *testing.T) {
+	tests := []struct {
+		name         string
+		resourceType string
+		parentField  string
+		fieldPath    string
+	}{
+		{
+			name:         "cluster",
+			resourceType: "Cluster",
+			parentField:  "hostedCluster",
+			fieldPath:    "spec.hostedCluster.platform.aws.resourceTags",
+		},
+		{
+			name:         "nodepool",
+			resourceType: "NodePool",
+			parentField:  "nodePool",
+			fieldPath:    "spec.nodePool.platform.aws.resourceTags",
+		},
+	}
+	passthroughSpec := func(parentField, value string) map[string]any {
+		return map[string]any{
+			"tags": map[string]any{"owner": "root-level"},
+			parentField: map[string]any{
+				"platform": map[string]any{
+					"aws": map[string]any{
+						"resourceTags": []any{map[string]any{"key": "legacy", "value": value}},
+					},
+				},
+			},
+		}
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			validator := NewFieldValidator(test.resourceType)
+			createErrs := validator.ValidateCreate(passthroughSpec(test.parentField, "value"), featuregate.Default)
+			if !hasFieldError(createErrs, test.fieldPath) {
+				t.Fatalf("expected create error for %s, got %v", test.fieldPath, createErrs)
+			}
+			if hasFieldError(createErrs, "spec.tags") {
+				t.Fatal("root-level tags should remain writable")
+			}
+
+			oldSpec := passthroughSpec(test.parentField, "old-value")
+			if errs := validator.ValidateUpdate(oldSpec, oldSpec, featuregate.Default); len(errs) != 0 {
+				t.Fatalf("unchanged service-set field should be allowed during update, got %v", errs)
+			}
+			updateErrs := validator.ValidateUpdate(passthroughSpec(test.parentField, "new-value"), oldSpec, featuregate.Default)
+			if !hasFieldError(updateErrs, test.fieldPath) {
+				t.Fatalf("expected update error for %s, got %v", test.fieldPath, updateErrs)
+			}
+			if hasFieldError(updateErrs, "spec.tags") {
+				t.Fatal("root-level tags should remain writable")
+			}
+		})
+	}
+}
+
+func hasFieldError(errs ValidationErrors, field string) bool {
+	for _, err := range errs {
+		if err.Field == field {
+			return true
+		}
+	}
+	return false
+}
+
 func TestValidateCreate_AllowsProxyConfiguration(t *testing.T) {
 	v := NewFieldValidator("Cluster")
 	errs := v.ValidateCreate(rest.ClusterSpec{

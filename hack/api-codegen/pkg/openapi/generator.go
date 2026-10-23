@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	crdgen "sigs.k8s.io/controller-tools/pkg/crd"
@@ -158,7 +159,9 @@ func (g *Generator) generateDefinitions(roots []*loader.Package) (map[string]api
 // are keyed by the Go struct name (e.g., "ClusterSpec").
 var typeToRegistryPrefix = map[string]string{
 	"ClusterSpec":                  "spec",
+	"Cluster":                      "",
 	"NodePoolSpec":                 "spec",
+	"NodePool":                     "",
 	"OidcConfigSpec":               "spec",
 	"HostedClusterSpecPassthrough": "spec.hostedCluster",
 	"NodePoolSpecPassthrough":      "spec.nodePool",
@@ -166,6 +169,10 @@ var typeToRegistryPrefix = map[string]string{
 	"ClusterNetworking":            "",
 	"ClusterDNS":                   "",
 	"ProxyConfiguration":           "",
+	"PlatformSpec":                 "",
+	"NodePoolPlatform":             "",
+	"AWSPlatformSpec":              "aws",
+	"AWSNodePoolPlatform":          "aws",
 	"KubeletConfig":                "kubelet",
 	"MachineConfigSpec":            "machineConfig",
 }
@@ -193,7 +200,7 @@ func filterHiddenFields(definitions map[string]apiextensionsv1.JSONSchemaProps) 
 	}
 
 	for typeName, schema := range definitions {
-		prefix, ok := typeToRegistryPrefix[typeName]
+		prefix, ok := registryPrefixForDefinition(typeName)
 		if !ok {
 			if leaked := leakedHiddenProps(schema, hiddenPaths); len(leaked) > 0 {
 				return fmt.Errorf("definition %q has hidden fields %v but no entry in typeToRegistryPrefix", typeName, leaked)
@@ -201,9 +208,37 @@ func filterHiddenFields(definitions map[string]apiextensionsv1.JSONSchemaProps) 
 			continue
 		}
 		pruned := pruneHiddenProperties(&schema, prefix, hiddenPaths)
+		if strings.HasSuffix(typeName, "List") {
+			pruneHiddenResourceListItems(pruned, prefix, hiddenPaths)
+		}
 		definitions[typeName] = *pruned
 	}
 	return nil
+}
+
+func registryPrefixForDefinition(typeName string) (string, bool) {
+	if prefix, ok := typeToRegistryPrefix[typeName]; ok {
+		return prefix, true
+	}
+	if strings.HasSuffix(typeName, "List") {
+		itemType := strings.TrimSuffix(typeName, "List")
+		if prefix, ok := typeToRegistryPrefix[itemType]; ok {
+			return prefix, true
+		}
+	}
+	return "", false
+}
+
+func pruneHiddenResourceListItems(schema *apiextensionsv1.JSONSchemaProps, prefix string, hiddenPaths map[string]bool) {
+	if schema.Properties == nil {
+		return
+	}
+	items, ok := schema.Properties["items"]
+	if !ok || items.Type != "array" || items.Items == nil || items.Items.Schema == nil {
+		return
+	}
+	items.Items.Schema = pruneHiddenProperties(items.Items.Schema, prefix, hiddenPaths)
+	schema.Properties["items"] = items
 }
 
 // leakedHiddenProps returns property names from schema whose bare name

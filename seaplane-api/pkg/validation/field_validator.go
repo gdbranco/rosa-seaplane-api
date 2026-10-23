@@ -181,10 +181,14 @@ func (v *FieldValidator) validate(fields, existingFields map[string]any, op Oper
 			continue
 		}
 
-		// Skip hidden fields and service-set structural containers. The latter
-		// can contain mutable descendants, such as proxy.httpProxy, and must not
-		// reject the whole object before its children are validated.
-		if meta.Hidden || isStructuralContainer(fieldPath, fieldMetaMap) {
+		// Structural containers can contain mutable descendants and must not
+		// reject the whole object before their children are validated. Hidden
+		// service-set leaves are still validated when explicitly supplied so
+		// internal fields cannot be written through the public API.
+		if isStructuralContainer(fieldPath, fieldMetaMap) {
+			continue
+		}
+		if meta.Hidden && effectiveWriteMode(meta, fs) != registry.ServiceSet {
 			continue
 		}
 

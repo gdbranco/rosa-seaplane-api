@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	hypershiftv1beta1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 
@@ -146,7 +145,10 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	queueURL, region := requestedTerminationHandlerQueue(req.Spec.HostedCluster.Platform.AWS)
+	var queueURL, region string
+	if aws := req.Spec.HostedCluster.Platform.AWS; aws != nil {
+		queueURL, region = aws.TerminationHandlerQueueURL, aws.Region
+	}
 	if queueURL != "" {
 		existing, err := h.db.ListClusters(ctx, accountID)
 		if err != nil {
@@ -583,18 +585,15 @@ func (h *ClusterHandler) validateTerminationHandlerQueueUpdate(
 	return nil, nil
 }
 
-func requestedTerminationHandlerQueue(aws *hypershiftv1beta1.AWSPlatformSpec) (queueURL, region string) {
-	if aws == nil {
-		return "", ""
-	}
-	return aws.TerminationHandlerQueueURL, aws.Region
-}
-
 func clusterTerminationHandlerQueue(cluster *seaplanev1alpha1.Cluster) (queueURL, region string) {
 	if cluster == nil {
 		return "", ""
 	}
-	return requestedTerminationHandlerQueue(cluster.Spec.HostedCluster.Platform.AWS)
+	aws := cluster.Spec.HostedCluster.Platform.AWS
+	if aws == nil {
+		return "", ""
+	}
+	return aws.TerminationHandlerQueueURL, aws.Region
 }
 
 func terminationHandlerQueueURLs(clusters []seaplanev1alpha1.Cluster, excludeName string) []string {
