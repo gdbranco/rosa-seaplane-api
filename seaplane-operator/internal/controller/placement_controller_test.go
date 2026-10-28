@@ -86,7 +86,27 @@ var _ = Describe("Placement Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: testNS, Name: clusterName + ".placement"}, &placement)).To(Succeed())
 			Expect(placement.Spec.ClusterName).To(Equal(clusterName))
 			Expect(placement.Spec.ManagementCluster).To(Equal(mcName))
+			Expect(placement.Labels[seaplanev1alpha1.ClusterNameLabel]).To(Equal(clusterName))
 			Expect(placement.Status.Phase).To(Equal(seaplanev1alpha1.PlacementPhaseBound))
+		})
+
+		It("keeps a legacy Cluster Placement on namespace fallback", func() {
+			resource := newTestCluster(clusterName)
+			delete(resource.Labels, seaplanev1alpha1.ClusterNameLabel)
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			reconciler := &PlacementReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Namespace: testNS, Name: clusterName},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var placement seaplanev1alpha1.Placement
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: testNS, Name: clusterName + ".placement"}, &placement)).To(Succeed())
+			Expect(placement.Labels).NotTo(HaveKey(seaplanev1alpha1.ClusterNameLabel))
 		})
 
 		It("should update Cluster status with placementRef", func() {

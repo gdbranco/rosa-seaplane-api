@@ -89,6 +89,7 @@ func PublicToInternalCluster(pub *public.Cluster, accountID string) *seaplanev1a
 	}
 
 	meta := customerObjectMeta(pub.ObjectMeta, accountID)
+	meta.Labels[seaplanev1alpha1.ClusterNameLabel] = pub.Name
 
 	enrichment := &conversion.ServiceSetFields{
 		AccountID: accountID,
@@ -232,7 +233,7 @@ func customerObjectMeta(meta metav1.ObjectMeta, accountID string) metav1.ObjectM
 			delete(meta.Annotations, key)
 		}
 	}
-	meta.Labels = map[string]string{"seaplane.io/account-id": accountID}
+	meta.Labels = map[string]string{seaplanev1alpha1.AccountIDLabel: accountID}
 	meta.Namespace = accountNamespace(accountID)
 	meta.UID = ""
 	meta.ResourceVersion = ""

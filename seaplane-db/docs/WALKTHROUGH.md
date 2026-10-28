@@ -640,20 +640,22 @@ judge in production are the same program, so passing the tests means something.
 
 ---
 
-## 11. Namespace-hash sharding
+## 11. Namespace and label sharding
 
 When a single replica's informer cache grows too large or poll load needs
-distributing, you can shard the cache by namespace hash. Each replica declares
-which hash residues it owns, and only those namespaces appear in its
-informer-backed List/Watch queries.
+distributing, you can shard the cache by namespace hash. A configured `KeyLabel`
+adds a namespace-scoped grouping key; rows with no non-empty label value continue
+to shard by namespace. Each replica declares which hash residues it owns, and
+only those shard keys appear in its informer-backed List/Watch queries.
 
 ```go
 mgr, _ := pgruntime.NewManager(pgruntime.Options{
     Scheme: scheme,
     DSN:    dsn,
     Shard: &pgruntime.ShardConfig{
-        Mod:   2,
-        Owned: []int{0},  // this replica owns even-hash namespaces
+        Mod:      2,
+        Owned:    []int{0},  // this replica owns even-hash keys
+        KeyLabel: "seaplane.io/cluster",
         UnshardedGVKs: []schema.GroupVersionKind{
             {Group: "example.com", Version: "v1", Kind: "ManagementCluster"},
         },
@@ -661,10 +663,11 @@ mgr, _ := pgruntime.NewManager(pgruntime.Options{
 })
 ```
 
-The SQL predicate appended to each poll is
-`abs(hashtext(namespace)::bigint) % 2 = ANY('{0}')` — using PostgreSQL's
-built-in `hashtext()` with a cast to `bigint` before `abs()` to avoid `INT_MIN` overflow. A second
-replica with `Owned: []int{1}` covers the other half.
+The SQL predicate appended to each poll hashes the namespace plus a non-empty
+label value, falling back to namespace if the label is absent or empty:
+`abs(hashtext(COALESCE(namespace || '/' || NULLIF(metadata->'labels'->>'seaplane.io/cluster', ''), namespace))::bigint) % 2 = ANY('{0}')`.
+PostgreSQL's built-in `hashtext()` is cast to `bigint` before `abs()` to avoid
+`INT_MIN` overflow. A second replica with `Owned: []int{1}` covers the other half.
 
 The direct client (`GetClient()`, `GetAPIReader()`) is **never sharded** — point
 reads and direct `List` calls always see the full dataset. Only the informer

@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testClusterNameLabel = "example.com/cluster-name"
+
 func TestShardSpec_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -65,6 +67,23 @@ func TestShardSpec_AppendQuery_DifferentArgCount(t *testing.T) {
 	assert.Equal(t, []int{1}, args[5])
 }
 
+func TestShardSpec_AppendQuery_KeyLabel(t *testing.T) {
+	s := reader.ShardSpec{Mod: 4, Owned: []int{0, 2}, KeyLabel: testClusterNameLabel}
+
+	query := "SELECT * FROM t WHERE gvk = $1 AND txid > $2"
+	args := []any{"apps/v1/Deployment", uint64(100)}
+
+	query, args = s.AppendQuery(query, args)
+
+	assert.Contains(t, query, "AND abs(hashtext(COALESCE(namespace || '/' || NULLIF(metadata->'labels'->>$3, ''), namespace))::bigint) % $4 = ANY($5::int[])")
+	require.Len(t, args, 5)
+	assert.Equal(t, "apps/v1/Deployment", args[0])
+	assert.Equal(t, uint64(100), args[1])
+	assert.Equal(t, testClusterNameLabel, args[2])
+	assert.Equal(t, 4, args[3])
+	assert.Equal(t, []int{0, 2}, args[4])
+}
+
 func TestShardSpec_ToListFilter(t *testing.T) {
 	s := reader.ShardSpec{Mod: 3, Owned: []int{0}}
 
@@ -87,4 +106,17 @@ func TestShardSpec_ToListFilter_MultiOwned(t *testing.T) {
 	require.Len(t, f.WhereArgs, 2)
 	assert.Equal(t, 4, f.WhereArgs[0])
 	assert.Equal(t, []int{1, 3}, f.WhereArgs[1])
+}
+
+func TestShardSpec_ToListFilter_KeyLabel(t *testing.T) {
+	s := reader.ShardSpec{Mod: 3, Owned: []int{2}, KeyLabel: testClusterNameLabel}
+
+	f := s.ToListFilter()
+
+	require.Len(t, f.WhereClauses, 1)
+	assert.Equal(t, "abs(hashtext(COALESCE(namespace || '/' || NULLIF(metadata->'labels'->>$2, ''), namespace))::bigint) % $3 = ANY($4::int[])", f.WhereClauses[0])
+	require.Len(t, f.WhereArgs, 3)
+	assert.Equal(t, testClusterNameLabel, f.WhereArgs[0])
+	assert.Equal(t, 3, f.WhereArgs[1])
+	assert.Equal(t, []int{2}, f.WhereArgs[2])
 }

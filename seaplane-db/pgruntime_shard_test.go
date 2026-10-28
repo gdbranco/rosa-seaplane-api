@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/jackc/pgx/v5"
 	seaplanedb "github.com/openshift-online/rosa-seaplane-api/seaplane-db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,12 +71,19 @@ func init() {
 
 // --- helpers ---
 
-func hashtextResidue(t *testing.T, ns string, mod int) int {
+const testClusterNameLabel = "example.com/cluster-name"
+
+func hashtextResidue(t *testing.T, key string, mod int) int {
 	t.Helper()
 	conn := sharedDB.Connect(t)
+	return hashtextResidueConn(t, conn, key, mod)
+}
+
+func hashtextResidueConn(t *testing.T, conn *pgx.Conn, key string, mod int) int {
+	t.Helper()
 	var residue int
 	err := conn.QueryRow(context.Background(),
-		"SELECT abs(hashtext($1)::bigint) % $2", ns, mod).Scan(&residue)
+		"SELECT abs(hashtext($1)::bigint) % $2", key, mod).Scan(&residue)
 	require.NoError(t, err)
 	return residue
 }
@@ -221,7 +229,7 @@ func TestShardedManager_ReconcileOnlyOwned(t *testing.T) {
 	require.Less(t, len(owned), len(namespaces), "need at least one namespace NOT in shard 0")
 
 	mgr := newShardedManager(t, &seaplanedb.ShardConfig{
-		Mod: mod, Owned: []int{0},
+		Mod: mod, Owned: []int{0}, KeyLabel: testClusterNameLabel,
 	})
 	c := mgr.GetClient()
 
@@ -287,6 +295,106 @@ done:
 	for _, ev := range events {
 		assert.True(t, owned[ev.Namespace],
 			"unexpected reconcile for namespace %q (not in shard 0)", ev.Namespace)
+	}
+}
+
+func TestShardedManager_KeyLabelCoLocatesResources(t *testing.T) {
+	const (
+		mod              = 8
+		clusterNameLabel = testClusterNameLabel
+		namespace        = "account-keyed"
+	)
+
+	hashConn := sharedDB.Connect(t)
+	fallbackShard := hashtextResidueConn(t, hashConn, namespace, mod)
+	clusterName := ""
+	clusterShard := -1
+	for i := range 1000 {
+		candidate := fmt.Sprintf("cluster-name-%d", i)
+		residue := hashtextResidueConn(t, hashConn, namespace+"/"+candidate, mod)
+		if residue != fallbackShard {
+			clusterName = candidate
+			clusterShard = residue
+			break
+		}
+	}
+	require.NotEmpty(t, clusterName, "need a label value on a different shard from the namespace fallback")
+
+	otherClusterName := ""
+	for i := range 1000 {
+		candidate := fmt.Sprintf("other-cluster-name-%d", i)
+		residue := hashtextResidueConn(t, hashConn, namespace+"/"+candidate, mod)
+		if residue != fallbackShard && residue != clusterShard {
+			otherClusterName = candidate
+			break
+		}
+	}
+	require.NotEmpty(t, otherClusterName, "need another label value on a distinct shard")
+
+	mgr := newShardedManager(t, &seaplanedb.ShardConfig{
+		Mod: mod, Owned: []int{clusterShard}, KeyLabel: clusterNameLabel,
+	})
+	c := mgr.GetClient()
+	reconciled := make(chan reconcile.Request, 20)
+	controllerErr := ctrl.NewControllerManagedBy(mgr).
+		Named("widget-reconcile-key-label").
+		For(&Widget{}).
+		Complete(reconcile.Func(func(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+			reconciled <- req
+			return reconcile.Result{}, nil
+		}))
+	require.NoError(t, controllerErr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	go func() {
+		if err := mgr.Start(ctx); err != nil {
+			t.Logf("manager exited: %v", err)
+		}
+	}()
+	time.Sleep(500 * time.Millisecond)
+
+	widgets := []Widget{
+		{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "cluster-a", Labels: map[string]string{clusterNameLabel: clusterName}}},
+		{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "nodepool-a", Labels: map[string]string{clusterNameLabel: clusterName}}},
+		{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "cluster-b", Labels: map[string]string{clusterNameLabel: otherClusterName}}},
+		{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "namespace-fallback"}},
+	}
+	for i := range widgets {
+		require.NoError(t, c.Create(ctx, &widgets[i]))
+	}
+
+	var events []reconcile.Request
+	deadline := time.After(10 * time.Second)
+	for len(events) < 2 {
+		select {
+		case req := <-reconciled:
+			events = append(events, req)
+		case <-deadline:
+			t.Fatalf("timeout: got %d events, want the two rows with Cluster name %q", len(events), clusterName)
+		}
+	}
+	idleTimer := time.NewTimer(time.Second)
+	defer idleTimer.Stop()
+	for {
+		select {
+		case req := <-reconciled:
+			events = append(events, req)
+			if !idleTimer.Stop() {
+				select {
+				case <-idleTimer.C:
+				default:
+				}
+			}
+			idleTimer.Reset(time.Second)
+		case <-idleTimer.C:
+			goto verified
+		}
+	}
+verified:
+	assert.Len(t, events, 2, "only rows with the selected Cluster name should reach this shard")
+	for _, event := range events {
+		assert.Contains(t, []string{"cluster-a", "nodepool-a"}, event.Name)
 	}
 }
 

@@ -41,7 +41,8 @@ func TestPublicToInternalCluster_SetsMetadata(t *testing.T) {
 	assert.Equal(t, testClusterName, result.Name)
 	assert.Equal(t, accountNamespace(testAccountID), result.Namespace)
 	assert.Empty(t, result.UID)
-	assert.Equal(t, testAccountID, result.Labels["seaplane.io/account-id"])
+	assert.Equal(t, testAccountID, result.Labels[accountIDLabel])
+	assert.Equal(t, testClusterName, result.Labels[seaplanev1alpha1.ClusterNameLabel])
 }
 
 func TestPublicToInternalCluster_InjectsServiceSetFields(t *testing.T) {
@@ -112,7 +113,7 @@ func TestInternalToPublicCluster_FiltersServiceSetFields(t *testing.T) {
 			Name:      testClusterName,
 			Namespace: accountNamespace(testAccountID),
 			UID:       types.UID(testClusterID),
-			Labels:    map[string]string{"seaplane.io/account-id": testAccountID},
+			Labels:    map[string]string{accountIDLabel: testAccountID},
 		},
 		Spec: seaplanev1alpha1.ClusterSpec{
 			AccountID:         testAccountID,
@@ -133,12 +134,16 @@ func TestInternalToPublicCluster_FiltersServiceSetFields(t *testing.T) {
 // Customer tags are annotations end to end; labels stay system-only.
 func TestCustomerTagsAreAnnotations(t *testing.T) {
 	pub := &public.Cluster{ObjectMeta: metav1.ObjectMeta{Name: testClusterName,
-		Labels:      map[string]string{"team": "dropped", "seaplane.io/account-id": "forged"},
+		Labels: map[string]string{
+			"team": "dropped", accountIDLabel: "forged", seaplanev1alpha1.ClusterNameLabel: "forged-cluster",
+		},
 		Annotations: map[string]string{"team": "blue", "seaplane.io/forged": "dropped"},
 	}}
 
 	cr := PublicToInternalCluster(pub, testAccountID)
-	assert.Equal(t, map[string]string{"seaplane.io/account-id": testAccountID}, cr.Labels)
+	assert.Equal(t, map[string]string{
+		accountIDLabel: testAccountID, seaplanev1alpha1.ClusterNameLabel: testClusterName,
+	}, cr.Labels)
 	assert.Equal(t, map[string]string{"team": "blue"}, cr.Annotations)
 	assert.Equal(t, cr.ObjectMeta, InternalToPublicCluster(cr).ObjectMeta)
 }
@@ -274,7 +279,7 @@ func TestPublicToInternalNodePool_SetsMetadata(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, testNodePoolName, result.Name)
 	assert.Equal(t, accountNamespace(testAccountID), result.Namespace)
-	assert.Equal(t, testAccountID, result.Labels["seaplane.io/account-id"])
+	assert.Equal(t, testAccountID, result.Labels[accountIDLabel])
 }
 
 func TestPublicToInternalNodePool_InjectsServiceSetFields(t *testing.T) {
@@ -328,7 +333,7 @@ func TestInternalToPublicNodePool_FiltersServiceSetFields(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testNodePoolName,
 			Namespace: accountNamespace(testAccountID),
-			Labels:    map[string]string{"seaplane.io/account-id": testAccountID},
+			Labels:    map[string]string{accountIDLabel: testAccountID},
 		},
 		Spec: seaplanev1alpha1.NodePoolSpec{
 			AccountID:      testAccountID,
@@ -393,9 +398,9 @@ func TestCustomerObjectMeta_SetsAccountNamespaceAndProtectsMetadata(t *testing.T
 		ResourceVersion:   "client-rv",
 		CreationTimestamp: created,
 		Labels: map[string]string{
-			"app":                                "test",
-			"seaplane.io/account-id":             "attacker",
-			"seaplane.io/claimed-by-cluster-uid": "attacker-cluster",
+			"app":          "test",
+			accountIDLabel: "attacker",
+			seaplanev1alpha1.ClaimedByClusterUIDLabel: "attacker-cluster",
 		},
 		OwnerReferences: []metav1.OwnerReference{{Name: "attacker"}},
 		Finalizers:      []string{"attacker"},
@@ -410,8 +415,8 @@ func TestCustomerObjectMeta_SetsAccountNamespaceAndProtectsMetadata(t *testing.T
 	assert.Empty(t, got.OwnerReferences)
 	assert.Empty(t, got.Finalizers)
 	assert.NotContains(t, got.Labels, "app")
-	assert.Equal(t, testAccountID, got.Labels["seaplane.io/account-id"])
-	assert.NotContains(t, got.Labels, "seaplane.io/claimed-by-cluster-uid")
+	assert.Equal(t, testAccountID, got.Labels[accountIDLabel])
+	assert.NotContains(t, got.Labels, seaplanev1alpha1.ClaimedByClusterUIDLabel)
 	assert.Equal(t, "account-attacker", input.Namespace, "input metadata must not be mutated")
 }
 
@@ -432,12 +437,12 @@ func TestPublicToInternalCluster_DoesNotMutateInput(t *testing.T) {
 
 	// CRD must carry the enriched metadata
 	assert.Equal(t, accountNamespace(testAccountID), cr.Namespace)
-	assert.Equal(t, testAccountID, cr.Labels["seaplane.io/account-id"])
+	assert.Equal(t, testAccountID, cr.Labels[accountIDLabel])
 
 	// pub.ObjectMeta must be unchanged
 	assert.Equal(t, "", pub.Namespace)
 	assert.Equal(t, types.UID(""), pub.UID)
-	_, hasAccountLabel := pub.Labels["seaplane.io/account-id"]
+	_, hasAccountLabel := pub.Labels[accountIDLabel]
 	assert.False(t, hasAccountLabel, "pub.Labels must not be mutated by conversion")
 	assert.Equal(t, "user-val", pub.Labels["user-key"])
 }
@@ -457,12 +462,12 @@ func TestPublicToInternalNodePool_DoesNotMutateInput(t *testing.T) {
 
 	// CRD must carry the enriched metadata
 	assert.Equal(t, accountNamespace(testAccountID), np.Namespace)
-	assert.Equal(t, testAccountID, np.Labels["seaplane.io/account-id"])
+	assert.Equal(t, testAccountID, np.Labels[accountIDLabel])
 
 	// pub.ObjectMeta must be unchanged
 	assert.Equal(t, "", pub.Namespace)
 	assert.Equal(t, types.UID(""), pub.UID)
-	_, hasAccountLabel := pub.Labels["seaplane.io/account-id"]
+	_, hasAccountLabel := pub.Labels[accountIDLabel]
 	assert.False(t, hasAccountLabel, "pub.Labels must not be mutated by conversion")
 	assert.Equal(t, "user-val", pub.Labels["user-key"])
 }

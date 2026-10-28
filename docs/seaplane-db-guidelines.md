@@ -286,22 +286,28 @@ uniqueness rules multiply.
 
 ## 8. Sharding
 
-Each operator replica reconciles one slice of the rows, keyed by the owning cluster's
-uid: the `seaplane.io/cluster-uid` label, or the row's own uid if it has no owner.
+Each operator replica reconciles one slice of the rows. For a row with a non-empty
+`seaplane.io/cluster` label, the shard key is its namespace plus that Cluster name.
+If the label is absent or empty, the shard key is just the namespace. New Cluster
+rows and their owned children carry the same name label; the separate
+`seaplane.io/cluster-uid` label and ownerReference continue to identify ownership.
+Legacy and account-level rows without the shard label retain per-namespace routing.
 
 **Why.** Reconcile work (AWS and management-cluster calls, retries, rate limits) grows
 with the fleet. Sharding spreads it across replicas and limits the blast radius of one
-bad pod. Keying by cluster keeps a cluster and all its objects on one replica, so
-while the replica count is stable, each cluster is reconciled in one place. Only
-watches and reconciles are sharded;
-reads always see every row. Details and limits are in
+bad pod. Namespace scopes the cluster name, so equal names in different accounts
+cannot affect each other's shard assignment. Cluster names are immutable and unique
+within an account namespace; reusing a name after deletion only reuses its shard, not
+its UID-based ownership. Only watches and reconciles are sharded; reads always see
+every row. Details and limits are in
 [sharding.md](../seaplane-operator/docs/sharding.md).
 
 **What it means for your code:**
 
-- **Carry the label.** An object whose watch triggers a cluster reconcile must carry
-  that cluster's `seaplane.io/cluster-uid`. Otherwise its events go to the wrong
-  replica.
+- **Carry the shard label.** New Clusters and owned children carry the parent's
+  `seaplane.io/cluster` name label, set by the platform at create and never changed.
+  Preserve `seaplane.io/cluster-uid` for UID-based ownership, cleanup, and selectors.
+  A child of a legacy Cluster without the name label also remains namespace-sharded.
 - **Be idempotent.** While the replica count changes, a cluster can briefly be
   reconciled by two pods.
 - **No decisions from local counts across clusters.** For something like placing onto
@@ -312,6 +318,7 @@ reads always see every row. Details and limits are in
 
 - [ ] References another object? It stores the **uid**.
 - [ ] Belongs to a cluster? **ownerReference + `seaplane.io/cluster-uid`**.
+- [ ] Cluster shard affinity? New Clusters and owned children carry `seaplane.io/cluster`; absent labels fall back to namespace.
 - [ ] Lists a cluster's objects? The **label**, not `InNamespace`.
 - [ ] Builds a name? Only `<cluster>.<child>`.
 - [ ] Per-cluster object on the management cluster? In **`cluster-<uid>`**, plain name.

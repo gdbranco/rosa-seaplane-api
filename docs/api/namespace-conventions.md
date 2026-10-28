@@ -27,7 +27,9 @@ namespace itself when the request omits it.
 Names identify human-facing resources; FleetDB UIDs identify object incarnations.
 NodePool resolves its parent using the Cluster-name prefix and account namespace,
 then stores the parent UID in its ownerReference and `seaplane.io/cluster-uid`
-label. OidcConfig and DNSReservation claims are likewise held by Cluster UID.
+label. Cluster-owned resources also carry `seaplane.io/cluster`, the immutable
+Cluster name used for namespace-scoped shard routing. OidcConfig and
+DNSReservation claims are held by Cluster UID but remain account-scoped.
 
 ## Management-Cluster Resources
 

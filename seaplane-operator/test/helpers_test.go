@@ -291,7 +291,10 @@ func newTestCluster(name string) *seaplanev1alpha1.Cluster {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: "account-111222333444",
-			Labels:    map[string]string{"seaplane.io/account-id": "111222333444"},
+			Labels: map[string]string{
+				seaplanev1alpha1.AccountIDLabel:   "111222333444",
+				seaplanev1alpha1.ClusterNameLabel: name,
+			},
 		},
 		Spec: seaplanev1alpha1.ClusterSpec{
 			AccountID:         "111222333444",
@@ -371,13 +374,14 @@ func createTestClusterWithReservation(cluster *seaplanev1alpha1.Cluster) error {
 	if cluster.Labels == nil {
 		cluster.Labels = make(map[string]string)
 	}
-	cluster.Labels["seaplane.io/account-id"] = accountID
+	cluster.Labels[seaplanev1alpha1.AccountIDLabel] = accountID
+	cluster.Labels[seaplanev1alpha1.ClusterNameLabel] = cluster.Name
 
 	reservation := &seaplanev1alpha1.DNSReservation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "dns-" + cluster.Name,
 			Namespace: cluster.Namespace,
-			Labels:    map[string]string{"seaplane.io/account-id": accountID},
+			Labels:    map[string]string{seaplanev1alpha1.AccountIDLabel: accountID},
 		},
 	}
 	if err := k8sClient.Create(ctx, reservation); err != nil {
@@ -397,7 +401,7 @@ func createTestClusterWithReservation(cluster *seaplanev1alpha1.Cluster) error {
 	if err := k8sClient.Create(ctx, cluster); err != nil {
 		return err
 	}
-	reservation.Labels["seaplane.io/claimed-by-cluster-uid"] = string(cluster.UID)
+	reservation.Labels[seaplanev1alpha1.ClaimedByClusterUIDLabel] = string(cluster.UID)
 	if err := k8sClient.Update(ctx, reservation); err != nil {
 		return err
 	}
@@ -415,7 +419,7 @@ func createTestClusterWithReservation(cluster *seaplanev1alpha1.Cluster) error {
 			if config.Labels == nil {
 				config.Labels = make(map[string]string)
 			}
-			config.Labels["seaplane.io/claimed-by-cluster-uid"] = string(cluster.UID)
+			config.Labels[seaplanev1alpha1.ClaimedByClusterUIDLabel] = string(cluster.UID)
 			return k8sClient.Update(ctx, config)
 		}
 		return fmt.Errorf("test OidcConfig UID %s not found in %s", cluster.Spec.OidcConfigID, cluster.Namespace)
@@ -474,7 +478,10 @@ func newTestNodePool(cluster *seaplanev1alpha1.Cluster) *seaplanev1alpha1.NodePo
 			},
 		},
 	}
-	nodePool.Labels = map[string]string{"seaplane.io/cluster-uid": string(cluster.UID)}
+	nodePool.Labels = map[string]string{
+		seaplanev1alpha1.ClusterUIDLabel:  string(cluster.UID),
+		seaplanev1alpha1.ClusterNameLabel: cluster.Name,
+	}
 	nodePool.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(cluster, seaplanev1alpha1.GroupVersion.WithKind("Cluster"))}
 	return nodePool
 }

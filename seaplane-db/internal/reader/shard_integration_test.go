@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/openshift-online/rosa-seaplane-api/seaplane-db/internal/model"
 	"github.com/openshift-online/rosa-seaplane-api/seaplane-db/internal/reader"
 	"github.com/openshift-online/rosa-seaplane-api/seaplane-db/internal/resourceversion"
@@ -17,16 +18,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// hashtextResidue returns the shard residue for a namespace using the same
-// formula as the SQL shard clause: abs(hashtext(ns)::bigint) % mod.
-func hashtextResidue(t *testing.T, db *testinfra.TestDB, ns string, mod int) int {
+// hashtextResidue returns the shard residue for a key using the same formula
+// as the SQL shard clause: abs(hashtext(key)::bigint) % mod.
+func hashtextResidue(t *testing.T, db *testinfra.TestDB, key string, mod int) int {
 	t.Helper()
 	conn := db.Connect(t)
+	return hashtextResidueConn(t, conn, key, mod)
+}
+
+func hashtextResidueConn(t *testing.T, conn *pgx.Conn, key string, mod int) int {
+	t.Helper()
 	var residue int
 	err := conn.QueryRow(context.Background(),
-		"SELECT abs(hashtext($1)::bigint) % $2", ns, mod).Scan(&residue)
+		"SELECT abs(hashtext($1)::bigint) % $2", key, mod).Scan(&residue)
 	require.NoError(t, err)
 	return residue
+}
+
+func distinctClusterName(t *testing.T, conn *pgx.Conn, namespace string, mod int, used map[int]bool, prefix string) string {
+	t.Helper()
+	for i := range 1000 {
+		label := fmt.Sprintf("%s-%d", prefix, i)
+		residue := hashtextResidueConn(t, conn, namespace+"/"+label, mod)
+		if !used[residue] {
+			used[residue] = true
+			return label
+		}
+	}
+	t.Fatal("could not find cluster label on a distinct shard")
+	return ""
 }
 
 // collectEvents drains the watcher's event channel until idle for idleTimeout.
@@ -205,6 +225,135 @@ func TestShardedList_FiltersNamespaces(t *testing.T) {
 	allResult, err := reader.List(ctx, listConn, "apps/v1/Deployment", nil)
 	require.NoError(t, err)
 	assert.Len(t, allResult.Resources, len(namespaces))
+}
+
+func TestShardedListAndWatcher_ClusterNameWithNamespaceFallback(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires postgres")
+	}
+	db := testinfra.StartPostgres(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	setupConn := db.Connect(t)
+	require.NoError(t, schema.Migrate(ctx, setupConn))
+	db.TruncateAll(t, setupConn)
+
+	const (
+		mod              = 8
+		clusterNameLabel = "example.com/cluster-name"
+		namespaceA       = "account-123"
+	)
+
+	hashConn := db.Connect(t)
+	usedResidues := map[int]bool{
+		hashtextResidueConn(t, hashConn, namespaceA, mod): true,
+	}
+	clusterAName := distinctClusterName(t, hashConn, namespaceA, mod, usedResidues, "cluster-a")
+	clusterBName := distinctClusterName(t, hashConn, namespaceA, mod, usedResidues, "cluster-b")
+
+	namespaceB := ""
+	namespaceBResidue := -1
+	for i := range 1000 {
+		candidate := fmt.Sprintf("account-other-%d", i)
+		residue := hashtextResidueConn(t, hashConn, candidate+"/"+clusterAName, mod)
+		if !usedResidues[residue] {
+			namespaceB = candidate
+			namespaceBResidue = residue
+			usedResidues[residue] = true
+			break
+		}
+	}
+	require.NotEmpty(t, namespaceB, "the second namespace should hash to a distinct shard")
+	require.NotEqual(t, -1, namespaceBResidue)
+
+	type testResource struct {
+		namespace   string
+		name        string
+		clusterName string
+		hasLabel    bool
+	}
+	resources := []testResource{
+		{namespace: namespaceA, name: "cluster-a", clusterName: clusterAName, hasLabel: true},
+		{namespace: namespaceA, name: "nodepool-a", clusterName: clusterAName, hasLabel: true},
+		{namespace: namespaceA, name: "cluster-b", clusterName: clusterBName, hasLabel: true},
+		{namespace: namespaceA, name: "nodepool-b", clusterName: clusterBName, hasLabel: true},
+		{namespace: namespaceA, name: "shared"},
+		{namespace: namespaceA, name: "empty-label", hasLabel: true},
+		{namespace: namespaceB, name: "same-name-other-namespace", clusterName: clusterAName, hasLabel: true},
+	}
+
+	expectedShard := make(map[string]int, len(resources))
+	writerConn := db.Connect(t)
+	wr := writer.New(writerConn, nil)
+	for _, resource := range resources {
+		key := resource.namespace
+		if resource.clusterName != "" {
+			key += "/" + resource.clusterName
+		}
+		expectedShard[resource.namespace+"/"+resource.name] = hashtextResidueConn(t, hashConn, key, mod)
+
+		metadata := json.RawMessage(`{}`)
+		if resource.hasLabel {
+			encoded, err := json.Marshal(map[string]any{
+				"labels": map[string]string{clusterNameLabel: resource.clusterName},
+			})
+			require.NoError(t, err)
+			metadata = encoded
+		}
+		_, err := wr.Write(ctx, model.WriteRequest{
+			GVK: "apps/v1/Deployment", Namespace: resource.namespace, Name: resource.name,
+			Spec: json.RawMessage(`{}`), Status: json.RawMessage(`{}`), Metadata: metadata,
+		})
+		require.NoError(t, err)
+	}
+
+	listConn := db.Connect(t)
+	seen := make(map[string]int, len(resources))
+	for shard := range mod {
+		filter := (&reader.ShardSpec{
+			Mod: mod, Owned: []int{shard}, KeyLabel: clusterNameLabel,
+		}).ToListFilter()
+		result, err := reader.List(ctx, listConn, "apps/v1/Deployment", filter)
+		require.NoError(t, err)
+		for _, resource := range result.Resources {
+			id := resource.Namespace + "/" + resource.Name
+			assert.Equal(t, shard, expectedShard[id], "resource %q was listed by the wrong shard", id)
+			seen[id]++
+		}
+	}
+	for _, resource := range resources {
+		id := resource.namespace + "/" + resource.name
+		assert.Equal(t, 1, seen[id], "resource %q must appear in exactly one shard", id)
+	}
+
+	clusterShard := expectedShard[namespaceA+"/cluster-a"]
+	pollConn := connectManual(t, db)
+	listenConn := connectManual(t, db)
+	w := reader.NewWatcher(pollConn, listenConn, reader.WatcherConfig{
+		GVK:              "apps/v1/Deployment",
+		StartRV:          resourceversion.RV{Watermark: 0},
+		BaselineInterval: 300 * time.Millisecond,
+		Shard: &reader.ShardSpec{
+			Mod: mod, Owned: []int{clusterShard}, KeyLabel: clusterNameLabel,
+		},
+	}, nil)
+
+	watchCtx, watchCancel := context.WithCancel(ctx)
+	done := runWatcher(w, watchCtx)
+	defer func() {
+		watchCancel()
+		<-done
+		_ = pollConn.Close(context.Background())
+		_ = listenConn.Close(context.Background())
+	}()
+
+	events := collectEvents(w, 5*time.Second, time.Second)
+	require.Len(t, events, 2, "the Cluster row and its NodePool should share a shard")
+	for _, event := range events {
+		id := event.Resource.Namespace + "/" + event.Resource.Name
+		assert.Equal(t, clusterShard, expectedShard[id], "watch delivered %q to the wrong shard", id)
+	}
 }
 
 // --- Finding 13: cluster-scoped resources (namespace="") ---

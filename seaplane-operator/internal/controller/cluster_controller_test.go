@@ -895,7 +895,10 @@ func newTestCluster(name string) *seaplanev1alpha1.Cluster {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: "account-123456789012",
-			Labels:    map[string]string{accountIDLabel: "123456789012"},
+			Labels: map[string]string{
+				accountIDLabel:                    "123456789012",
+				seaplanev1alpha1.ClusterNameLabel: name,
+			},
 		},
 		Spec: seaplanev1alpha1.ClusterSpec{
 			AccountID:         "123456789012",
