@@ -640,13 +640,16 @@ judge in production are the same program, so passing the tests means something.
 
 ---
 
-## 11. Namespace and label sharding
+## 11. UID and label sharding
 
 When a single replica's informer cache grows too large or poll load needs
-distributing, you can shard the cache by namespace hash. A configured `KeyLabel`
-adds a namespace-scoped grouping key; rows with no non-empty label value continue
-to shard by namespace. Each replica declares which hash residues it owns, and
-only those shard keys appear in its informer-backed List/Watch queries.
+distributing, you can shard its List/Watch streams by namespace plus database UID.
+A configured `KeyLabel` lets related rows share a label-value key within that
+namespace; rows without the label fall back to their own database UID. For
+Seaplane resources, `cluster-uid` groups Cluster-owned children with their Cluster,
+whose row falls back to its own UID.
+Each replica declares which hash residues it owns, and only those shard keys
+appear in its informer-backed List/Watch queries.
 
 ```go
 mgr, _ := pgruntime.NewManager(pgruntime.Options{
@@ -655,7 +658,7 @@ mgr, _ := pgruntime.NewManager(pgruntime.Options{
     Shard: &pgruntime.ShardConfig{
         Mod:      2,
         Owned:    []int{0},  // this replica owns even-hash keys
-        KeyLabel: "seaplane.io/cluster",
+        KeyLabel: "seaplane.io/cluster-uid",
         UnshardedGVKs: []schema.GroupVersionKind{
             {Group: "example.com", Version: "v1", Kind: "ManagementCluster"},
         },
@@ -663,9 +666,9 @@ mgr, _ := pgruntime.NewManager(pgruntime.Options{
 })
 ```
 
-The SQL predicate appended to each poll hashes the namespace plus a non-empty
-label value, falling back to namespace if the label is absent or empty:
-`abs(hashtext(COALESCE(namespace || '/' || NULLIF(metadata->'labels'->>'seaplane.io/cluster', ''), namespace))::bigint) % 2 = ANY('{0}')`.
+The SQL predicate appended to each poll hashes the account namespace plus the
+configured label value or, when that label is absent, the row UID:
+`abs(hashtext(namespace || '/' || COALESCE(metadata->'labels'->>'seaplane.io/cluster-uid', uid::text))::bigint) % 2 = ANY('{0}')`.
 PostgreSQL's built-in `hashtext()` is cast to `bigint` before `abs()` to avoid
 `INT_MIN` overflow. A second replica with `Owned: []int{1}` covers the other half.
 
@@ -676,9 +679,9 @@ cache (the watch stream feeding reconcile triggers) is partitioned.
 config — useful for cluster-scoped configuration resources that all replicas
 need.
 
-To scale, change `Mod` and rolling-restart. The transient overlap (some
-namespaces watched by both old and new replicas) is benign — just duplicate
-reconciles, deduplicated by the informer cache.
+To scale, change `Mod` and rolling-restart. The transient overlap (some shard
+keys watched by both old and new replicas) is benign — just duplicate reconciles,
+deduplicated by the informer cache.
 
 ---
 

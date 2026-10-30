@@ -256,7 +256,6 @@ var _ = Describe("Cluster lifecycle", func() {
 		var ownedPlacement seaplanev1alpha1.Placement
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: testNS, Name: clusterName + ".placement"}, &ownedPlacement)).To(Succeed())
 		Expect(ownedPlacement.Labels[seaplanev1alpha1.ClusterUIDLabel]).To(Equal(string(cluster.UID)))
-		Expect(ownedPlacement.Labels[seaplanev1alpha1.ClusterNameLabel]).To(Equal(cluster.Name))
 		Expect(metav1.GetControllerOf(&ownedPlacement).UID).To(Equal(cluster.UID))
 
 		By("creating a NodePool CR")

@@ -29,10 +29,11 @@ import (
 )
 
 // ShardConfig partitions the cache's informer List/Watch streams across
-// replicas. When KeyLabel is set, a non-empty label value is combined with the
-// resource namespace; rows without that label fall back to namespace-only
-// sharding. The direct client and cache reader are never sharded. This type
-// mirrors internal reader.ShardSpec and adds per-GVK opt-out via UnshardedGVKs.
+// replicas. When KeyLabel is set, rows carrying that label shard by the
+// namespace and label value; rows without it shard by namespace and database
+// UID. With no KeyLabel, every row shards by namespace and database UID. The
+// direct client and cache reader are never sharded. This type mirrors internal
+// reader.ShardSpec and adds per-GVK opt-out via UnshardedGVKs.
 type ShardConfig struct {
 	Mod           int
 	Owned         []int

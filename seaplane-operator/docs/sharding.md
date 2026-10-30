@@ -1,23 +1,25 @@
-# Namespace and Cluster-Name Sharding
+# Cluster-UID Sharding
 
-The seaplane operator partitions cache List/Watch streams across replicas. Rows
-with a `seaplane.io/cluster` label are assigned using the account namespace and
-that Cluster name; rows without a non-empty label retain per-namespace sharding.
+The seaplane operator partitions cache List/Watch streams across replicas by
+the account namespace plus an effective UID key. A row with
+`seaplane.io/cluster-uid` uses that UID; otherwise, it uses its own database UID.
+The resource name is not part of the key.
 
 ```text
-key = namespace + "/" + clusterName   when the label is non-empty
-key = namespace                       otherwise
+key = namespace + "/" + seaplane.io/cluster-uid   when the label is present
+key = namespace + "/" + row UID                  otherwise
 shard = abs(hashtext(key)::bigint) % replicaCount
 ```
 
-The namespace scopes the name and ensures resources from different accounts do
-not share an assignment key. New Cluster rows, NodePools, and Placements carry
-the same name label, so they are colocated. The distinct
-`seaplane.io/cluster-uid` label and ownerReference continue to carry machine
-ownership and cleanup identity. Account-level resources and legacy rows without
-the name label fall back to their namespace. A child created for a legacy
-Cluster without the name label also omits it, keeping that child on the same
-namespace shard. Reads through the direct client remain unsharded.
+The Cluster row has no `cluster-uid` label because seaplane-db assigns its UID
+on insert, so its key is its namespace plus that UID. NodePools and Placements
+are created after the Cluster exists and carry its UID in `cluster-uid`,
+colocating them with the Cluster. The ownership label therefore doubles as the
+shard key; no separate label or propagation logic is needed. Account-level resources
+such as DNSReservations, OidcConfigs, and Indexes have no `cluster-uid` label and
+shard by their own database UIDs within the account namespace. A
+`claimed-by-cluster-uid` label does not change their shard key. Reads through the
+direct client remain unsharded.
 
 ## How It Works
 
@@ -27,20 +29,20 @@ The same parameterized PostgreSQL predicate is used for informer List and Watch
 queries:
 
 ```sql
-abs(hashtext(COALESCE(
-    namespace || '/' || NULLIF(metadata->'labels'->>'seaplane.io/cluster', ''),
-    namespace
+abs(hashtext(namespace || '/' || COALESCE(
+    metadata->'labels'->>'seaplane.io/cluster-uid',
+    uid::text
 ))::bigint) % $mod = ANY($owned)
 ```
 
-An absent or empty label falls back to the namespace. The operator configures
-the label key via `pgruntime.ShardConfig`:
+If the label is absent, the namespace and row's database UID form the key. The
+operator configures the label key via `pgruntime.ShardConfig`:
 
 ```go
 pgruntime.ShardConfig{
     Mod:      replicaCount,
     Owned:    []int{ordinal},
-    KeyLabel: v1alpha1.ClusterNameLabel,
+    KeyLabel: v1alpha1.ClusterUIDLabel,
     UnshardedGVKs: []schema.GroupVersionKind{
         v1alpha1.SchemeGroupVersion.WithKind("ManagementCluster"),
     },
@@ -49,8 +51,8 @@ pgruntime.ShardConfig{
 
 - **Mod**: the modulus (total number of shards, equal to `replicaCount`)
 - **Owned**: the shard indices this replica owns (typically just `[ordinal]`)
-- **KeyLabel**: the optional label combined with the namespace; absent/empty
-  values fall back to namespace-only sharding
+- **KeyLabel**: the optional label whose value replaces the row UID within the
+  namespace-scoped key; rows without it use their own UID
 - **UnshardedGVKs**: GVKs exempt from sharding (every replica sees them)
 
 ### Operator Replica Assignment
@@ -63,9 +65,9 @@ hostname (e.g., `seaplane-operator-2` -> 2) and owns that shard from
 my_shard = ordinal
 ```
 
-For four replicas, each labeled Cluster name and namespace fallback key hashes
-to one of shards `0..3`. Different Clusters in the same account can be handled
-by different replicas.
+For four replicas, each namespace-scoped Cluster UID hashes to one of shards
+`0..3`. A Cluster and its owned children share a shard, while different
+Clusters in one account can be handled by different replicas.
 
 ### ManagementCluster Visibility
 

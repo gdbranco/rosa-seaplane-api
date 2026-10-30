@@ -324,22 +324,22 @@ Correctness that is only tested pre-GA decays. Run a **verifier** as a permanent
 - **Phase 6 — Failover drills.** Unplanned (reboot-with-failover) under load + one orchestrated planned failover, repeated ≥5×. RTO ≤120 s; zero acknowledged-write loss; tripwires silent; verifier confirms commit-ordered continuity through every drill. Include R8 assertions.
 - **Phase 7 — Backup/restore regression.** Restore a snapshot into a fresh instance (DR path). Because a restore _can_ legitimately rewind state, all controller pods must be restarted after the restore so caches relist from the current state. The drill asserts that after restart, controllers converge to the correct state with no stale data.
 
-## 8. Namespace and Optional Label Sharding
+## 8. UID and Optional Label Sharding
 
-Read-side controller sharding partitions the cache's List/Watch streams across replicas using a namespace-scoped label when configured. Rows without that label retain per-namespace sharding, reducing per-replica memory and poll load while remaining compatible with unlabelled resources.
+Read-side controller sharding partitions the cache's List/Watch streams across replicas by namespace plus a row UID or optional label value. When a label is configured and present, its value is used in place of the row's database UID; otherwise the row's UID is used. The name does not affect shard assignment.
 
 ### 8.1 Approach
 
-When `KeyLabel` is configured, sharding hashes the namespace combined with a non-empty value of that metadata label; absent or empty values fall back to namespace:
+For the operator's Cluster affinity, `KeyLabel` is `seaplane.io/cluster-uid`. The namespace scopes each key to its account. A Cluster row has no such label and therefore hashes by its namespace and database UID; its owned children carry the Cluster UID in that label and land on the same shard. Account-level rows without that label hash by their namespace and own UIDs.
 
 ```sql
-abs(hashtext(COALESCE(
-    namespace || '/' || NULLIF(metadata->'labels'->>'seaplane.io/cluster', ''),
-    namespace
+abs(hashtext(namespace || '/' || COALESCE(
+    metadata->'labels'->>'seaplane.io/cluster-uid',
+    uid::text
 ))::bigint) % $Mod = ANY($Owned::int[])
 ```
 
-Without `KeyLabel`, the predicate hashes namespace alone. The cast to `bigint` before `abs()` avoids overflow when `hashtext()` returns `INT_MIN` (`-2147483648`), since `abs(-2147483648::int)` exceeds the int4 range. The same predicate is appended to both List and Watch queries. A configured shard label should be set at create and remain immutable; changing it moves the row between shards.
+Without `KeyLabel`, the predicate hashes `namespace || '/' || uid::text`. The cast to `bigint` before `abs()` avoids overflow when `hashtext()` returns `INT_MIN` (`-2147483648`), since `abs(-2147483648::int)` exceeds the int4 range. The same predicate is appended to both List and Watch queries. A configured shard label should be set at create and remain immutable; changing it moves the row between shards.
 
 ### 8.2 Types
 
@@ -351,7 +351,7 @@ Two types expose sharding at different layers:
 ### 8.3 Scope
 
 - **Sharded:** the cache's informer-backed List/Watch (the `ListerWatcher` created inside `pgCache.getOrCreateInformer`). Each informer's poll query includes the shard predicate, so the informer cache contains only the replica's owned shard keys.
-- **Never sharded:** the direct client (`GetClient()`, `GetAPIReader()`). Point reads (`Get`) and direct `List` calls always query the full dataset — they bypass the informer cache entirely. This ensures cross-shard reads remain possible when needed (e.g., looking up a resource in a namespace owned by another shard).
+- **Never sharded:** the direct client (`GetClient()`, `GetAPIReader()`). Point reads (`Get`) and direct `List` calls always query the full dataset — they bypass the informer cache entirely. This ensures cross-shard reads remain possible when needed (e.g., looking up a resource assigned to another replica).
 - **`UnshardedGVKs`:** GVKs listed here skip the shard predicate entirely. Every replica watches the full set of objects for these GVKs.
 
 ### 8.4 Invariants

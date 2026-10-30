@@ -27,7 +27,7 @@ The operator uses [fleetdb](../../seaplane-db/) to implement the controller-runt
 CRDs are under API group `seaplane.io/v1alpha1`. Most are **namespace-scoped** — the namespace is `account-<accountID>`, with the account ID also stored in the `seaplane.io/account-id` label. **ManagementCluster** is the exception: it is **cluster-scoped** and declared as an `UnshardedGVK` so every operator pod sees all ManagementClusters regardless of its shard assignment.
 
 - **Cluster** — represents a ROSA HCP cluster. `metadata.Name` is a client-chosen DNS label; `metadata.Namespace` is `account-<accountID>`. Spec contains all the configuration needed to create a HostedCluster on a management cluster.
-- **NodePool** — represents a set of worker nodes for a Cluster. Named `<cluster>.<child>` in the same account namespace. Parent ownership is tracked via an ownerReference and `seaplane.io/cluster-uid` label; `seaplane.io/cluster` carries the parent name for shard routing.
+- **NodePool** — represents a set of worker nodes for a Cluster. Named `<cluster>.<child>` in the same account namespace. Parent ownership and shard affinity use an ownerReference and `seaplane.io/cluster-uid` label.
 - **Placement** — binds a Cluster to a management cluster. Created automatically by the Placement controller. In the same account namespace.
 - **DNSReservation** — customer-facing resource that reserves a DNS prefix and base domain. It can be created before a Cluster for shared-VPC flows. Claimed by a Cluster via the `seaplane.io/claimed-by-cluster-uid` label.
 - **OidcConfig** — represents an OIDC issuer configuration for cluster identity.
@@ -82,7 +82,7 @@ ManagementCluster CRs in PostgreSQL serve as the registry of available managemen
 
 ## Deployment
 
-The operator runs as a StatefulSet, deployed via a Helm chart through ArgoCD. It connects to PostgreSQL for CR storage and to DynamoDB for desire management. The StatefulSet provides stable pod ordinals used for [namespace and Cluster-name sharding](sharding.md).
+The operator runs as a StatefulSet, deployed via a Helm chart through ArgoCD. It connects to PostgreSQL for CR storage and to DynamoDB for desire management. The StatefulSet provides stable pod ordinals used for [Cluster-UID sharding](sharding.md).
 
 ```
 charts/seaplane-operator/
@@ -103,6 +103,6 @@ Required configuration:
 - `baseDomain` — DNS base domain for hosted clusters
 - `POSTGRES_DSN` — PostgreSQL connection string
 
-## Horizontal Scaling via Namespace and Cluster-Name Sharding
+## Horizontal Scaling via Cluster-UID Sharding
 
-The operator partitions cache List/Watch streams on `namespace + seaplane.io/cluster` when that label is present, with per-namespace fallback when it is absent. New Clusters, NodePools, and Placements carry the name label; account-level and legacy resources without it remain on the namespace shard. `seaplane.io/cluster-uid` remains the ownership label. ManagementCluster is unsharded. Each StatefulSet replica owns one shard equal to its pod ordinal. See [Sharding](sharding.md) for the exact predicate and scaling limits.
+The operator partitions cache List/Watch streams using namespace plus `seaplane.io/cluster-uid` when present, or namespace plus the row's own database UID otherwise. The Cluster falls back to its UID; NodePools and Placements carry that UID label and share its shard. Account-level resources without the label shard by their own UIDs within the namespace. ManagementCluster is unsharded. Each StatefulSet replica owns one shard equal to its pod ordinal. See [Sharding](sharding.md) for the exact predicate and scaling limits.

@@ -89,7 +89,6 @@ func PublicToInternalCluster(pub *public.Cluster, accountID string) *seaplanev1a
 	}
 
 	meta := customerObjectMeta(pub.ObjectMeta, accountID)
-	meta.Labels[seaplanev1alpha1.ClusterNameLabel] = pub.Name
 
 	enrichment := &conversion.ServiceSetFields{
 		AccountID: accountID,

@@ -90,8 +90,7 @@ func TestNodePoolHandler_Create_SetsAccountOwnership(t *testing.T) {
 			"name":      "parent.workers",
 			"namespace": "account-" + testAccountID,
 			"labels": map[string]any{
-				seaplanev1alpha1.AccountIDLabel:   "999999999999",
-				seaplanev1alpha1.ClusterNameLabel: "forged-cluster",
+				seaplanev1alpha1.AccountIDLabel: "999999999999",
 			},
 		},
 		"spec": map[string]any{"nodePool": map[string]any{"replicas": 2}, "accountId": "999999999999"},
@@ -112,38 +111,8 @@ func TestNodePoolHandler_Create_SetsAccountOwnership(t *testing.T) {
 	if stored.Spec.AccountID != testAccountID || stored.Labels[seaplanev1alpha1.AccountIDLabel] != testAccountID {
 		t.Errorf("stored ownership = (%q, %q), want caller account %q", stored.Spec.AccountID, stored.Labels[seaplanev1alpha1.AccountIDLabel], testAccountID)
 	}
-	if stored.Labels[seaplanev1alpha1.ClusterNameLabel] != "parent" {
-		t.Errorf("cluster shard label = %q, want parent", stored.Labels[seaplanev1alpha1.ClusterNameLabel])
-	}
-}
-
-func TestNodePoolHandler_Create_LegacyParentFallsBackToNamespaceShard(t *testing.T) {
-	const clusterID = "550e8400-e29b-41d4-a716-446655440000"
-	parent := testClusterCR(clusterID, "legacy-parent", testAccountID)
-	delete(parent.Labels, seaplanev1alpha1.ClusterNameLabel)
-	handler := newTestNodePoolHandler(t, parent)
-	body := mustMarshal(t, map[string]any{
-		"metadata": map[string]any{
-			"name":      "legacy-parent.workers",
-			"namespace": "account-" + testAccountID,
-		},
-		"spec": map[string]any{"nodePool": map[string]any{"replicas": 2}},
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v0/nodepools", bytes.NewReader(body))
-	req = req.WithContext(testContext(testAccountID))
-	w := httptest.NewRecorder()
-
-	handler.Create(w, req)
-
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	stored, err := handler.db.GetNodePool(req.Context(), "legacy-parent.workers")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := stored.Labels[seaplanev1alpha1.ClusterNameLabel]; ok {
-		t.Fatalf("legacy child should use namespace fallback, got shard label %q", stored.Labels[seaplanev1alpha1.ClusterNameLabel])
+	if stored.Labels[clusterUIDLabel] != clusterID {
+		t.Errorf("cluster UID shard label = %q, want parent UID %q", stored.Labels[clusterUIDLabel], clusterID)
 	}
 }
 

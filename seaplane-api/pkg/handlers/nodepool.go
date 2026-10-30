@@ -267,9 +267,6 @@ func (h *NodePoolHandler) Create(w http.ResponseWriter, r *http.Request) {
 	cr.Spec.NodePool.ClusterName = cluster.Name
 	cr.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(cluster, seaplanev1alpha1.GroupVersion.WithKind("Cluster"))}
 	cr.Labels[clusterUIDLabel] = string(cluster.UID)
-	if clusterName := cluster.Labels[seaplanev1alpha1.ClusterNameLabel]; clusterName != "" {
-		cr.Labels[seaplanev1alpha1.ClusterNameLabel] = clusterName
-	}
 
 	if !h.authorizeNodePool(w, withRequestLabels(r, cr.Annotations), authz.CreateNodePool, cr) {
 		return

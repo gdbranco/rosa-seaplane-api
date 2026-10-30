@@ -896,8 +896,7 @@ func newTestCluster(name string) *seaplanev1alpha1.Cluster {
 			Name:      name,
 			Namespace: "account-123456789012",
 			Labels: map[string]string{
-				accountIDLabel:                    "123456789012",
-				seaplanev1alpha1.ClusterNameLabel: name,
+				accountIDLabel: "123456789012",
 			},
 		},
 		Spec: seaplanev1alpha1.ClusterSpec{

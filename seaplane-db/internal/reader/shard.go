@@ -5,14 +5,16 @@ import "fmt"
 // ShardSpec restricts a List or Watch to rows whose shard key hash,
 // modulo Mod, falls in Owned. Nil *ShardSpec means unsharded.
 //
-// The shard key is namespace when KeyLabel is empty or absent on a row. When
-// KeyLabel is set, rows with a non-empty value for that label use
-// namespace + "/" + label value. The label must remain stable for the
-// lifetime of a row so List and Watch continue to agree on shard ownership.
+// The shard key is the row's namespace plus its database UID when KeyLabel is
+// empty or absent on a row. When KeyLabel is set and present, its value replaces
+// the row UID in that namespace-scoped key. This lets owned children share their
+// owner's UID while parent and unrelated rows fall back to their own UID. The
+// label must remain stable for the lifetime of a row so List and Watch continue
+// to agree on shard ownership.
 type ShardSpec struct {
 	Mod      int    // hash modulus, > 0
 	Owned    []int  // residues owned by this replica, each in [0, Mod)
-	KeyLabel string // optional label used with the namespace to form the shard key
+	KeyLabel string // optional label whose value replaces the row UID in the shard key
 }
 
 func (s *ShardSpec) Validate() error {
@@ -38,12 +40,12 @@ func (s *ShardSpec) Validate() error {
 func (s *ShardSpec) shardClause(startParam int) (string, []any) {
 	if s.KeyLabel != "" {
 		clause := fmt.Sprintf(
-			"abs(hashtext(COALESCE(namespace || '/' || NULLIF(metadata->'labels'->>$%d, ''), namespace))::bigint) %% $%d = ANY($%d::int[])",
+			"abs(hashtext(namespace || '/' || COALESCE(metadata->'labels'->>$%d, uid::text))::bigint) %% $%d = ANY($%d::int[])",
 			startParam, startParam+1, startParam+2)
 		return clause, []any{s.KeyLabel, s.Mod, s.Owned}
 	}
 	clause := fmt.Sprintf(
-		"abs(hashtext(namespace)::bigint) %% $%d = ANY($%d::int[])",
+		"abs(hashtext(namespace || '/' || uid::text)::bigint) %% $%d = ANY($%d::int[])",
 		startParam, startParam+1)
 	return clause, []any{s.Mod, s.Owned}
 }

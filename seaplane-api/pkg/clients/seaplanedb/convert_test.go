@@ -41,8 +41,7 @@ func TestPublicToInternalCluster_SetsMetadata(t *testing.T) {
 	assert.Equal(t, testClusterName, result.Name)
 	assert.Equal(t, accountNamespace(testAccountID), result.Namespace)
 	assert.Empty(t, result.UID)
-	assert.Equal(t, testAccountID, result.Labels[accountIDLabel])
-	assert.Equal(t, testClusterName, result.Labels[seaplanev1alpha1.ClusterNameLabel])
+	assert.Equal(t, map[string]string{accountIDLabel: testAccountID}, result.Labels)
 }
 
 func TestPublicToInternalCluster_InjectsServiceSetFields(t *testing.T) {
@@ -135,15 +134,13 @@ func TestInternalToPublicCluster_FiltersServiceSetFields(t *testing.T) {
 func TestCustomerTagsAreAnnotations(t *testing.T) {
 	pub := &public.Cluster{ObjectMeta: metav1.ObjectMeta{Name: testClusterName,
 		Labels: map[string]string{
-			"team": "dropped", accountIDLabel: "forged", seaplanev1alpha1.ClusterNameLabel: "forged-cluster",
+			"team": "dropped", accountIDLabel: "forged",
 		},
 		Annotations: map[string]string{"team": "blue", "seaplane.io/forged": "dropped"},
 	}}
 
 	cr := PublicToInternalCluster(pub, testAccountID)
-	assert.Equal(t, map[string]string{
-		accountIDLabel: testAccountID, seaplanev1alpha1.ClusterNameLabel: testClusterName,
-	}, cr.Labels)
+	assert.Equal(t, map[string]string{accountIDLabel: testAccountID}, cr.Labels)
 	assert.Equal(t, map[string]string{"team": "blue"}, cr.Annotations)
 	assert.Equal(t, cr.ObjectMeta, InternalToPublicCluster(cr).ObjectMeta)
 }

@@ -117,8 +117,7 @@ func testClusterCR(clusterID, clusterName, accountID string) *seaplanev1alpha1.C
 			Namespace: "account-" + accountID,
 			UID:       types.UID(clusterID),
 			Labels: map[string]string{
-				seaplanev1alpha1.AccountIDLabel:   accountID,
-				seaplanev1alpha1.ClusterNameLabel: clusterName,
+				seaplanev1alpha1.AccountIDLabel: accountID,
 			},
 		},
 		Spec: seaplanev1alpha1.ClusterSpec{
@@ -355,8 +354,11 @@ func TestClusterHandler_Create_Success(t *testing.T) {
 	if stored.Spec.AccountID != testAccountID || stored.Labels[seaplanev1alpha1.AccountIDLabel] != testAccountID {
 		t.Errorf("stored ownership = (%q, %q), want caller account %q", stored.Spec.AccountID, stored.Labels[seaplanev1alpha1.AccountIDLabel], testAccountID)
 	}
-	if stored.Labels[seaplanev1alpha1.ClusterNameLabel] != stored.Name {
-		t.Errorf("stored cluster shard label = %q, want Cluster name %q", stored.Labels[seaplanev1alpha1.ClusterNameLabel], stored.Name)
+	if len(stored.Labels) != 1 || stored.Labels[seaplanev1alpha1.AccountIDLabel] != testAccountID {
+		t.Errorf("stored Cluster labels = %v, want only the account label", stored.Labels)
+	}
+	if _, ok := stored.Labels[seaplanev1alpha1.ClusterUIDLabel]; ok {
+		t.Errorf("Cluster must fall back to its database UID for sharding, got cluster UID label %q", stored.Labels[seaplanev1alpha1.ClusterUIDLabel])
 	}
 }
 

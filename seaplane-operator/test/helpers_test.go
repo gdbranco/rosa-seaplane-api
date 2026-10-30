@@ -292,8 +292,7 @@ func newTestCluster(name string) *seaplanev1alpha1.Cluster {
 			Name:      name,
 			Namespace: "account-111222333444",
 			Labels: map[string]string{
-				seaplanev1alpha1.AccountIDLabel:   "111222333444",
-				seaplanev1alpha1.ClusterNameLabel: name,
+				seaplanev1alpha1.AccountIDLabel: "111222333444",
 			},
 		},
 		Spec: seaplanev1alpha1.ClusterSpec{
@@ -375,7 +374,6 @@ func createTestClusterWithReservation(cluster *seaplanev1alpha1.Cluster) error {
 		cluster.Labels = make(map[string]string)
 	}
 	cluster.Labels[seaplanev1alpha1.AccountIDLabel] = accountID
-	cluster.Labels[seaplanev1alpha1.ClusterNameLabel] = cluster.Name
 
 	reservation := &seaplanev1alpha1.DNSReservation{
 		ObjectMeta: metav1.ObjectMeta{
@@ -479,8 +477,7 @@ func newTestNodePool(cluster *seaplanev1alpha1.Cluster) *seaplanev1alpha1.NodePo
 		},
 	}
 	nodePool.Labels = map[string]string{
-		seaplanev1alpha1.ClusterUIDLabel:  string(cluster.UID),
-		seaplanev1alpha1.ClusterNameLabel: cluster.Name,
+		seaplanev1alpha1.ClusterUIDLabel: string(cluster.UID),
 	}
 	nodePool.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(cluster, seaplanev1alpha1.GroupVersion.WithKind("Cluster"))}
 	return nodePool

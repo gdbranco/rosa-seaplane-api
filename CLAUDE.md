@@ -77,11 +77,11 @@ Cross-module refs use permanent `replace` directives to sibling dirs.
   names are immutable, and a Cluster child is named `<cluster>.<child>`.
 - seaplane-db assigns each resource UID. References and ownership use UIDs:
   ownerReference plus `seaplane.io/cluster-uid` for Cluster-owned children.
-- `seaplane.io/cluster` contains the immutable Cluster name for shard routing.
-  New Clusters and their owned children carry it; sharding hashes namespace plus
-  this label, falling back to namespace when absent or empty. It is not an
-  ownership reference. Legacy Clusters without it and their children stay on the
-  namespace fallback.
+- List/Watch sharding hashes the namespace plus `seaplane.io/cluster-uid` when
+  present, otherwise the namespace plus the row's own UID. A Cluster uses its
+  database UID; its owned children use that same UID label, so they share a
+  shard without a second label. Account-level resources without `cluster-uid`
+  use their own UID within the namespace.
 - Labels are platform-owned. Customer metadata belongs in validated annotations.
   Finalizers clean up resources and claims; reconcilers must be idempotent.
 - DNSReservation is a customer-created, account-scoped claim that may precede a

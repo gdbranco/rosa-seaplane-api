@@ -79,9 +79,6 @@ func (r *PlacementReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		labels := map[string]string{
 			clusterUIDLabel: string(cluster.UID),
 		}
-		if clusterName := cluster.Labels[seaplanev1alpha1.ClusterNameLabel]; clusterName != "" {
-			labels[seaplanev1alpha1.ClusterNameLabel] = clusterName
-		}
 		placement = seaplanev1alpha1.Placement{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      placementName,

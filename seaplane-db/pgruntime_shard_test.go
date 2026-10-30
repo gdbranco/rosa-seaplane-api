@@ -71,7 +71,7 @@ func init() {
 
 // --- helpers ---
 
-const testClusterNameLabel = "example.com/cluster-name"
+const testClusterUIDLabel = seaplanedb.ClusterUIDLabel
 
 func hashtextResidue(t *testing.T, key string, mod int) int {
 	t.Helper()
@@ -216,24 +216,14 @@ func TestShardedManager_APIReaderUnfiltered(t *testing.T) {
 // --- T3.6: Reconcile routes only owned-shard events ---
 
 func TestShardedManager_ReconcileOnlyOwned(t *testing.T) {
-	mod := 2
-	namespaces := []string{"ns-alpha", "ns-beta", "ns-gamma", "ns-delta", "ns-epsilon"}
-
-	owned := map[string]bool{}
-	for _, ns := range namespaces {
-		if hashtextResidue(t, ns, mod) == 0 {
-			owned[ns] = true
-		}
-	}
-	require.NotEmpty(t, owned, "need at least one namespace in shard 0")
-	require.Less(t, len(owned), len(namespaces), "need at least one namespace NOT in shard 0")
+	const mod = 2
 
 	mgr := newShardedManager(t, &seaplanedb.ShardConfig{
-		Mod: mod, Owned: []int{0}, KeyLabel: testClusterNameLabel,
+		Mod: mod, Owned: []int{0},
 	})
 	c := mgr.GetClient()
 
-	reconciled := make(chan reconcile.Request, 20)
+	reconciled := make(chan reconcile.Request, 64)
 	err := ctrl.NewControllerManagedBy(mgr).
 		Named("widget-reconcile-owned").
 		For(&Widget{}).
@@ -253,22 +243,36 @@ func TestShardedManager_ReconcileOnlyOwned(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	for _, ns := range namespaces {
+	const numObjects = 32
+	expectedShard := make(map[string]int, numObjects)
+	for i := range numObjects {
 		w := &Widget{
-			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "obj"},
+			ObjectMeta: metav1.ObjectMeta{Namespace: fmt.Sprintf("ns-%02d", i), Name: fmt.Sprintf("obj-%02d", i)},
 			Spec:       WidgetSpec{Color: "green"},
 		}
 		require.NoError(t, c.Create(ctx, w))
+		expectedShard[w.Name] = hashtextResidue(t, w.Namespace+"/"+string(w.UID), mod)
 	}
+	owned := 0
+	unowned := 0
+	for _, shard := range expectedShard {
+		if shard == 0 {
+			owned++
+		} else {
+			unowned++
+		}
+	}
+	require.Greater(t, owned, 0, "need at least one row UID in shard 0")
+	require.Greater(t, unowned, 0, "need at least one row UID outside shard 0")
 
 	var events []reconcile.Request
 	deadline := time.After(10 * time.Second)
-	for len(events) < len(owned) {
+	for len(events) < owned {
 		select {
 		case req := <-reconciled:
 			events = append(events, req)
 		case <-deadline:
-			t.Fatalf("timeout: got %d events, want %d", len(events), len(owned))
+			t.Fatalf("timeout: got %d events, want %d", len(events), owned)
 		}
 	}
 	// Idle-drain: wait for 1s of silence to catch unexpected extras.
@@ -291,53 +295,26 @@ func TestShardedManager_ReconcileOnlyOwned(t *testing.T) {
 	}
 done:
 
-	assert.Len(t, events, len(owned))
+	assert.Len(t, events, owned)
 	for _, ev := range events {
-		assert.True(t, owned[ev.Namespace],
-			"unexpected reconcile for namespace %q (not in shard 0)", ev.Namespace)
+		assert.Equal(t, 0, expectedShard[ev.Name],
+			"unexpected reconcile for %q with UID outside shard 0", ev.Name)
 	}
 }
 
-func TestShardedManager_KeyLabelCoLocatesResources(t *testing.T) {
+func TestShardedManager_ClusterUIDColocatesResources(t *testing.T) {
 	const (
-		mod              = 8
-		clusterNameLabel = testClusterNameLabel
-		namespace        = "account-keyed"
+		mod       = 2
+		namespace = "account-keyed"
 	)
 
-	hashConn := sharedDB.Connect(t)
-	fallbackShard := hashtextResidueConn(t, hashConn, namespace, mod)
-	clusterName := ""
-	clusterShard := -1
-	for i := range 1000 {
-		candidate := fmt.Sprintf("cluster-name-%d", i)
-		residue := hashtextResidueConn(t, hashConn, namespace+"/"+candidate, mod)
-		if residue != fallbackShard {
-			clusterName = candidate
-			clusterShard = residue
-			break
-		}
-	}
-	require.NotEmpty(t, clusterName, "need a label value on a different shard from the namespace fallback")
-
-	otherClusterName := ""
-	for i := range 1000 {
-		candidate := fmt.Sprintf("other-cluster-name-%d", i)
-		residue := hashtextResidueConn(t, hashConn, namespace+"/"+candidate, mod)
-		if residue != fallbackShard && residue != clusterShard {
-			otherClusterName = candidate
-			break
-		}
-	}
-	require.NotEmpty(t, otherClusterName, "need another label value on a distinct shard")
-
 	mgr := newShardedManager(t, &seaplanedb.ShardConfig{
-		Mod: mod, Owned: []int{clusterShard}, KeyLabel: clusterNameLabel,
+		Mod: mod, Owned: []int{0}, KeyLabel: testClusterUIDLabel,
 	})
 	c := mgr.GetClient()
-	reconciled := make(chan reconcile.Request, 20)
+	reconciled := make(chan reconcile.Request, 64)
 	controllerErr := ctrl.NewControllerManagedBy(mgr).
-		Named("widget-reconcile-key-label").
+		Named("widget-reconcile-cluster-uid").
 		For(&Widget{}).
 		Complete(reconcile.Func(func(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 			reconciled <- req
@@ -354,24 +331,52 @@ func TestShardedManager_KeyLabelCoLocatesResources(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	widgets := []Widget{
-		{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "cluster-a", Labels: map[string]string{clusterNameLabel: clusterName}}},
-		{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "nodepool-a", Labels: map[string]string{clusterNameLabel: clusterName}}},
-		{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "cluster-b", Labels: map[string]string{clusterNameLabel: otherClusterName}}},
-		{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "namespace-fallback"}},
+	expectedShard := make(map[string]int)
+	clusterShards := make(map[int]bool)
+	for i := range 100 {
+		cluster := &Widget{ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace, Name: fmt.Sprintf("cluster-%02d", i),
+		}}
+		require.NoError(t, c.Create(ctx, cluster))
+		clusterUID := string(cluster.UID)
+		clusterShard := hashtextResidue(t, namespace+"/"+clusterUID, mod)
+		clusterShards[clusterShard] = true
+		expectedShard[cluster.Name] = clusterShard
+
+		child := &Widget{ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      fmt.Sprintf("nodepool-%02d", i),
+			Labels:    map[string]string{testClusterUIDLabel: clusterUID},
+		}}
+		require.NoError(t, c.Create(ctx, child))
+		expectedShard[child.Name] = hashtextResidue(t, namespace+"/"+clusterUID, mod)
+		assert.Equal(t, clusterShard, expectedShard[child.Name], "Cluster and child must share a UID shard")
+		if len(clusterShards) == mod {
+			break
+		}
 	}
-	for i := range widgets {
-		require.NoError(t, c.Create(ctx, &widgets[i]))
+	require.Len(t, clusterShards, mod, "Clusters in one namespace should cover both UID shards")
+	accountResource := &Widget{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "account-resource"}}
+	require.NoError(t, c.Create(ctx, accountResource))
+	expectedShard[accountResource.Name] = hashtextResidue(t, namespace+"/"+string(accountResource.UID), mod)
+
+	owned := 0
+	for _, shard := range expectedShard {
+		if shard == 0 {
+			owned++
+		}
 	}
+	require.Greater(t, owned, 0)
+	require.Less(t, owned, len(expectedShard), "both shard 0 and shard 1 should receive rows")
 
 	var events []reconcile.Request
 	deadline := time.After(10 * time.Second)
-	for len(events) < 2 {
+	for len(events) < owned {
 		select {
 		case req := <-reconciled:
 			events = append(events, req)
 		case <-deadline:
-			t.Fatalf("timeout: got %d events, want the two rows with Cluster name %q", len(events), clusterName)
+			t.Fatalf("timeout: got %d events, want %d rows in shard 0", len(events), owned)
 		}
 	}
 	idleTimer := time.NewTimer(time.Second)
@@ -392,25 +397,16 @@ func TestShardedManager_KeyLabelCoLocatesResources(t *testing.T) {
 		}
 	}
 verified:
-	assert.Len(t, events, 2, "only rows with the selected Cluster name should reach this shard")
+	assert.Len(t, events, owned, "only rows assigned to shard 0 should reach this replica")
 	for _, event := range events {
-		assert.Contains(t, []string{"cluster-a", "nodepool-a"}, event.Name)
+		assert.Equal(t, 0, expectedShard[event.Name], "row %q was delivered to the wrong shard", event.Name)
 	}
 }
 
 // --- T3.7: Unsharded GVK sees all namespaces ---
 
 func TestShardedManager_UnshardedGVK(t *testing.T) {
-	mod := 2
-	namespaces := []string{"ns-alpha", "ns-beta", "ns-gamma", "ns-delta"}
-
-	notOwned := 0
-	for _, ns := range namespaces {
-		if hashtextResidue(t, ns, mod) != 0 {
-			notOwned++
-		}
-	}
-	require.Greater(t, notOwned, 0, "need at least one namespace NOT in shard 0")
+	const mod = 2
 
 	mgr := newShardedManager(t, &seaplanedb.ShardConfig{
 		Mod:   mod,
@@ -441,46 +437,44 @@ func TestShardedManager_UnshardedGVK(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 
-	for _, ns := range namespaces {
+	const numObjects = 16
+	notOwned := 0
+	for i := range numObjects {
 		g := &Gadget{
-			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "g"},
+			ObjectMeta: metav1.ObjectMeta{Namespace: fmt.Sprintf("ns-%02d", i), Name: fmt.Sprintf("g-%02d", i)},
 			Spec:       GadgetSpec{Size: "large"},
 		}
 		require.NoError(t, c.Create(ctx, g))
+		if hashtextResidue(t, g.Namespace+"/"+string(g.UID), mod) != 0 {
+			notOwned++
+		}
 	}
+	require.Greater(t, notOwned, 0, "need at least one row UID outside the owned shard")
 
 	var events []reconcile.Request
 	deadline := time.After(10 * time.Second)
-	for len(events) < len(namespaces) {
+	for len(events) < numObjects {
 		select {
 		case req := <-gadgetReconciled:
 			events = append(events, req)
 		case <-deadline:
-			t.Fatalf("timeout: got %d events, want %d", len(events), len(namespaces))
+			t.Fatalf("timeout: got %d events, want %d", len(events), numObjects)
 		}
 	}
 
-	assert.Len(t, events, len(namespaces),
+	assert.Len(t, events, numObjects,
 		"unsharded GVK must see events from all namespaces")
 }
 
 // --- T3.12: Two replicas, disjoint partition, complete coverage ---
 
 func TestShardedManager_TwoReplicas(t *testing.T) {
-	mod := 2
-	namespaces := []string{"ns-1", "ns-2", "ns-3", "ns-4", "ns-5", "ns-6"}
-
-	shard0 := map[string]bool{}
-	shard1 := map[string]bool{}
-	for _, ns := range namespaces {
-		if hashtextResidue(t, ns, mod) == 0 {
-			shard0[ns] = true
-		} else {
-			shard1[ns] = true
-		}
+	const mod = 2
+	const numObjects = 32
+	namespaces := make([]string, numObjects)
+	for i := range namespaces {
+		namespaces[i] = fmt.Sprintf("ns-%02d", i)
 	}
-	require.NotEmpty(t, shard0, "need at least one namespace in shard 0")
-	require.NotEmpty(t, shard1, "need at least one namespace in shard 1")
 
 	conn := sharedDB.Connect(t)
 	sharedDB.TruncateAll(t, conn)
@@ -502,8 +496,8 @@ func TestShardedManager_TwoReplicas(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	reconciled0 := make(chan reconcile.Request, 20)
-	reconciled1 := make(chan reconcile.Request, 20)
+	reconciled0 := make(chan reconcile.Request, 64)
+	reconciled1 := make(chan reconcile.Request, 64)
 
 	require.NoError(t, ctrl.NewControllerManagedBy(mgr0).
 		Named("widget-shard0").
@@ -537,13 +531,22 @@ func TestShardedManager_TwoReplicas(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	c := mgr0.GetClient()
+	shard0 := map[string]bool{}
+	shard1 := map[string]bool{}
 	for _, ns := range namespaces {
 		w := &Widget{
 			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "w"},
 			Spec:       WidgetSpec{Color: "blue"},
 		}
 		require.NoError(t, c.Create(ctx, w))
+		if hashtextResidue(t, w.Namespace+"/"+string(w.UID), mod) == 0 {
+			shard0[ns] = true
+		} else {
+			shard1[ns] = true
+		}
 	}
+	require.NotEmpty(t, shard0, "need at least one row UID in shard 0")
+	require.NotEmpty(t, shard1, "need at least one row UID in shard 1")
 
 	var events0, events1 []reconcile.Request
 	deadline := time.After(10 * time.Second)

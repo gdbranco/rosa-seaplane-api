@@ -69,7 +69,6 @@ func authzResourceOperations(t *testing.T, p *authzProcess, store client.Client)
 			Name: fixture.cluster + ".workers", Namespace: parent.Namespace,
 			Labels: map[string]string{
 				authzAccountLabel: fixture.account, v1.ClusterUIDLabel: string(parent.UID),
-				v1.ClusterNameLabel: parent.Name,
 			},
 			Annotations:     map[string]string{authzTeamLabel: fixture.team},
 			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(&parent, v1.GroupVersion.WithKind("Cluster"))},
