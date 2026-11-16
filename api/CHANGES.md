@@ -1,5 +1,24 @@
 # Changes
 
+## 0.1.26 Nov 16 2026
+
+- Remove Manifest API/controller and dead k8s RBAC scaffold
+- added more testing of ECR env variables, fixed write-mode of ImageContainerSources
+- ROSAENG-67497 Add policy management
+- chore(api): bump version to api/v0.1.28
+- ROSAENG-67911 | refactor: keep namespace sharding, document why
+- chore(api): bump version to api/v0.1.27
+- Remove incorrect kubelet association from ClusterConfiguration
+- ROSAENG-67911 | feat: drop name label and rely on UID instead
+- ROSAENG-67911 | feat: include namespace+label sharding
+- chore(api): bump version to api/v0.1.26
+- feat(api): support HCP custom DNS domains
+- ROSAENG-67495: Authorize customer label operations
+- ROSAENG-67492: Simplify authorization
+- ROSAENG-67492: Authorize resource operations
+- Reapply "ROSAENG-67489: Remove legacy authz service"
+
+
 ## 0.1.28 Nov 03 2026
 
 - ROSAENG-67911 | refactor: keep namespace sharding, document why
