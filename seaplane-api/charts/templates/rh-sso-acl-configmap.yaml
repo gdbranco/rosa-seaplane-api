@@ -1,0 +1,9 @@
+{{- if .Values.platformApi.app.rhSso.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rh-sso-acl
+  namespace: {{ .Values.platformApi.namespace }}
+data:
+  acl.yaml: {{ .Values.platformApi.app.rhSso.acl | default "" | quote }}
+{{- end }}

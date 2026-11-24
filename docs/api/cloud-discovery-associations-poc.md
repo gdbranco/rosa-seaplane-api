@@ -46,9 +46,10 @@ The account ID is derived only from the verified gateway identity; it is not
 accepted in the body or URL. The role ARN must be an IAM role in that exact
 AWS account. The JWT must have the configured issuer, audience, and `azp`;
 `sub`, and an organization claim (`org_id`, `organization.id`, or `rh-org-id`)
-are required. The organization claim is persisted as the association's target;
-other user identity claims are not stored. No Accounts Management lookup is
-performed.
+are required. For ROSA's OCM access token, `org_id` and `organization.id`
+identify the organization's external ID, not its internal AMS ID. The verified
+external ID is persisted as the association's target; other user identity
+claims are not stored. No Accounts Management lookup is performed.
 
 Org-admin enforcement is a functional middleware option. It is disabled on the
 association route while testing with a non-admin account. A route that requires
@@ -75,6 +76,13 @@ route:
 | `--rh-sso-jwt-audience` | `RH_SSO_JWT_AUDIENCE` | Required token `aud` |
 | `--rh-sso-jwt-azp` | `RH_SSO_JWT_AZP` | Required token `azp` |
 
+The API Helm chart supplies these settings under `platformApi.app.rhSso` and
+enables the POC by default. Its defaults use the Red Hat external realm JWKS
+URL and issuer, `cloud-services` for audience and authorized party, and an
+empty ACL file. The ACL file must exist, but an empty ACL means no additional
+claim-pattern restriction. Deployments can override these values through Helm
+values, including the regional-cluster values in `rosa-seaplane`.
+
 The route is not registered if no RH SSO configuration is supplied. Partial or
 invalid configuration fails startup. JWKS errors fail closed, including
 refresh failures when no local snapshot is configured. The URL is authoritative
@@ -94,12 +102,13 @@ creation atomic: the first request succeeds; later creates return `409`.
 The public collection path currently implements only `POST`; there are no
 get/list, update, or delete routes in this POC.
 
-The POC stores the role ARN in `spec`, the organization ID in server-managed
-`status`, and the creation time in `metadata.creationTimestamp`. The AWS account
-is represented by the account-scoped namespace and label. It does not store RH
-SSO user identifiers, JWTs, or AWS credentials. Trust-policy validation, an STS
-assume-role check, role rotation, and revocation are future work. The role ARN
-is create-only; the POC has no update or delete operation.
+The POC stores the role ARN in `spec`, the organization external ID in
+server-managed `status.organizationId`, and the creation time in
+`metadata.creationTimestamp`. The AWS account is represented by the account-
+scoped namespace and label. It does not store RH SSO user identifiers, JWTs, or
+AWS credentials. Trust-policy validation, an STS assume-role check, role
+rotation, and revocation are future work. The role ARN is create-only; the POC
+has no update or delete operation.
 
 ## ROSA login and request flow
 
@@ -110,6 +119,10 @@ uses the OCM SDK connection to obtain and persist an access token. The
 ID token from the browser's OIDC response. Tokens with a `typ: ID` claim are
 rejected. The existing `rosa link ocm-role` command remains the separate OCM
 account-management workflow.
+
+The command reads the current OCM organization's `ExternalID` only to show it
+in the confirmation prompt. It does not send an organization ID; the API
+derives the external ID from the verified access token.
 
 Example:
 
