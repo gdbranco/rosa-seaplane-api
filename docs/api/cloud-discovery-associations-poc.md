@@ -44,12 +44,14 @@ The route requires two independent credentials:
 
 The account ID is derived only from the verified gateway identity; it is not
 accepted in the body or URL. The role ARN must be an IAM role in that exact
-AWS account. The JWT must have the configured issuer, audience, and `azp`;
-`sub`, and an organization claim (`org_id`, `organization.id`, or `rh-org-id`)
-are required. For ROSA's OCM access token, `org_id` and `organization.id`
-identify the organization's external ID, not its internal AMS ID. The verified
-external ID is persisted as the association's target; other user identity
-claims are not stored. No Accounts Management lookup is performed.
+AWS account. The JWT signature must validate against the configured JWKS and
+the `iss` claim must match the configured issuer. A nonempty `sub` and an
+organization claim (`org_id`, `organization.id`, or `rh-org-id`) are required.
+The API does not validate `aud` or `azp`, matching UHC Clusters Service. For
+ROSA's OCM access token, `org_id` and `organization.id` identify the
+organization's external ID, not its internal AMS ID. The verified external ID
+is persisted as the association's target; other user identity claims are not
+stored. No Accounts Management lookup is performed.
 
 Org-admin enforcement is a functional middleware option. It is disabled on the
 association route while testing with a non-admin account. A route that requires
@@ -59,8 +61,8 @@ the middleware then requires `is_org_admin: true`
 before calling its handler.
 
 The decoded ID-token example with `typ: "ID"` is not accepted. Send the normal
-bearer access token used by Clusters Service. For migration continuity, the
-POC can be configured for `aud=cloud-services` and `azp=cloud-services`.
+bearer access token used by Clusters Service. The API does not require that the
+token contain `aud` or `azp`.
 
 ## RH SSO configuration
 
@@ -73,15 +75,13 @@ route:
 | `--rh-sso-jwks-file` | `RH_SSO_JWKS_FILE` | Local JWKS file; can be used with the URL |
 | `--rh-sso-acl-file` | `RH_SSO_ACL_FILE` | UHC-style claim ACL file; an empty file is allowed |
 | `--rh-sso-jwt-issuer` | `RH_SSO_JWT_ISSUER` | Exact token `iss` |
-| `--rh-sso-jwt-audience` | `RH_SSO_JWT_AUDIENCE` | Required token `aud` |
-| `--rh-sso-jwt-azp` | `RH_SSO_JWT_AZP` | Required token `azp` |
 
 The API Helm chart supplies these settings under `platformApi.app.rhSso` and
 enables the POC by default. Its defaults use the Red Hat external realm JWKS
-URL and issuer, `cloud-services` for audience and authorized party, and an
-empty ACL file. The ACL file must exist, but an empty ACL means no additional
-claim-pattern restriction. Deployments can override these values through Helm
-values, including the regional-cluster values in `rosa-seaplane`.
+URL and issuer, and an empty ACL file. The ACL file must exist, but an empty
+ACL means no additional claim-pattern restriction. Deployments can override
+these values through Helm values, including the regional-cluster values in
+`rosa-seaplane`.
 
 The route is not registered if no RH SSO configuration is supplied. Partial or
 invalid configuration fails startup. JWKS errors fail closed, including
@@ -90,9 +90,9 @@ when it returns a valid JWKS; the local file is used only if the URL is
 unavailable, and its keys are not merged with a healthy URL response. RSA
 `RS256` and `RS512` signing keys are accepted.
 ACL rules follow UHC semantics: a token is ACL-allowed if any configured rule
-matches. Issuer, audience, and authorized-party checks are always mandatory and
-cannot be weakened by an empty ACL. Org-admin checking is independently enabled
-per route through the middleware option.
+matches. Issuer, subject, and organization checks remain mandatory; `aud` and
+`azp` are not checked. Org-admin checking is independently enabled per route
+through the middleware option.
 
 ## Storage and limits
 
@@ -109,6 +109,107 @@ scoped namespace and label. It does not store RH SSO user identifiers, JWTs, or
 AWS credentials. Trust-policy validation, an STS assume-role check, role
 rotation, and revocation are future work. The role ARN is create-only; the POC
 has no update or delete operation.
+
+## Planned operator access model
+
+The account association is intended to identify the customer-side role that the
+operator assumes. It is separate from the operator pod's own AWS identity:
+
+```text
+seaplane-operator ServiceAccount
+  → EKS Pod Identity
+  → Seaplane regional IAM role (source)
+  → STS AssumeRole using this association's roleArn
+  → customer IAM role (target)
+  → customer AWS APIs
+```
+
+### Seaplane source role
+
+The regional EKS deployment binds the `seaplane` namespace's
+`seaplane-operator` ServiceAccount to a regional IAM role with an EKS Pod
+Identity association. The role trusts the `pods.eks.amazonaws.com` service
+principal for `sts:AssumeRole` and `sts:TagSession`. This binding is provisioned
+in the `rosa-seaplane` repository's Terraform configuration
+(`terraform/config/regional-cluster/main.tf`), not by this API resource or a
+Helm-created AWS association. Helm must still deploy the ServiceAccount with
+the matching namespace and name. The EKS Pod Identity Agent must be installed.
+The AWS SDK default credential chain in the operator obtains and refreshes the
+pod's temporary source credentials; no static keys or customer role ARN are
+injected into the pod.
+
+The source role needs permission to call `sts:AssumeRole` on approved customer
+roles, as well as the permissions it needs for Seaplane-owned resources. The
+regional Terraform policy in the `rosa-seaplane` repository limits target roles
+using the `seaplane-access=true` IAM role tag. If that constraint is retained,
+customer roles must carry the tag.
+
+### Customer target role
+
+`spec.roleArn` is the customer-side target role. On any operator AWS call, the
+operator must resolve the association from the resource's owning AWS account
+and verify that the account ID in the role ARN matches the Cluster's
+service-set account ID and account namespace/label. A NodePool resolves the
+same association through its UID-validated parent Cluster. Reject mismatches
+before calling STS or making customer-account API calls.
+
+The customer role's trust policy must name the Seaplane source role and require
+the exact, service-owned AWS STS ExternalId for this account association. For
+example:
+
+```json
+{
+  "Effect": "Allow",
+  "Principal": {
+    "AWS": "arn:aws:iam::<regional-account>:role/<regional-id>-seaplane-operator"
+  },
+  "Action": "sts:AssumeRole",
+  "Condition": {
+    "StringEquals": {
+      "sts:ExternalId": "<stable-service-issued-id>"
+    }
+  }
+}
+```
+
+The AWS STS ExternalId is distinct from `status.organizationId`, which is the
+organization identifier derived from RH SSO. The ExternalId must be stable for
+the shared account association, passed in every AssumeRole request, and
+available to the customer when they configure the role trust. It is not an AWS
+credential. Account-ID validation is still required; ExternalId does not prove
+that a role belongs to the Cluster's account.
+
+The customer role's permission policy must cover the approved consumers of the
+association. Examples include EC2 describe operations for preflight and VPC
+discovery, `secretsmanager:GetSecretValue` scoped to an unmanaged OIDC
+configuration's `secretArn`, and `iam:GetRole` for the planned trust-policy
+check. Any write-probe permissions must be explicitly reviewed and bounded.
+The operator uses the customer role to read the customer's OIDC key; storing
+the copied key in Seaplane's Secrets Manager remains an operation under the
+Seaplane source role.
+
+The operator should cache refreshable STS credentials per association and
+refresh them through the AWS SDK. Do not persist credentials or session tokens.
+The preflight gate must inspect the full customer role trust policy and reject
+wildcard, alternate-principal, or unconditional allows; a successful
+AssumeRole call alone does not prove that the policy is sufficiently
+restricted.
+
+### Relationship to OIDC configs and association lifecycle
+
+The intended model is for an unmanaged `OidcConfig` to retain its customer
+`secretArn` and resolve the customer role from the account association, rather
+than storing a separate `installerRoleArn` on each OIDC config. The association
+can then provide the same account role for preflight, cloud discovery, OIDC
+secret reads, and other approved operator tasks. This is a planned integration:
+the current OIDC API still requires `installerRoleArn`, and this association
+POC does not yet perform the STS call or role validation.
+
+Using the association as shared account access requires a read path for the
+operator and explicit update/revocation semantics for role rotation. Changes
+must re-enqueue affected Clusters and NodePools and invalidate preflight
+results that were checked against the old association revision. The current
+create-only endpoint does not yet provide that lifecycle.
 
 ## ROSA login and request flow
 
@@ -158,19 +259,18 @@ flowchart TD
   SSO header before SigV4 signing so it is covered by `SignedHeaders`. Do not
   send the AWS account ID in the request body.
 
-The current OCM client login uses `aud=cloud-services`; the POC config must
-allow that value during migration. The sample `typ: ID` token is not forwarded:
-the client uses the access token issued/refreshed through the OCM SDK connection.
+The sample `typ: ID` token is not forwarded: the client uses the access token
+issued/refreshed through the OCM SDK connection.
 
 ## Validation boundary and token acquisition
 
 The API does not exchange credentials with RH SSO, call token introspection,
 or make a live SSO authorization request for each association request. It
 validates the access token locally: the JWT signature must verify against a
-trusted RH SSO public signing key, and its issuer, audience, authorized party,
-time claims, ACL, and organization claims must pass the configured checks.
-Org-admin status is additionally required only when the route enables the
-middleware option.
+trusted RH SSO public signing key, and its issuer, time claims, ACL, subject,
+and organization claims must pass the configured checks. Audience and
+authorized-party claims are not checked. Org-admin status is additionally
+required only when the route enables the middleware option.
 
 The API does retrieve public JWKS keys from the configured RH SSO certs URL at
 startup and refresh, using the mounted JWKS file only when that URL is

@@ -45,8 +45,6 @@ platformApi:
       jwksUrl: "https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/certs"
       acl: ""
       issuer: "https://sso.redhat.com/auth/realms/redhat-external"
-      audience: "cloud-services"
-      authorizedParty: "cloud-services"
 
     # Resources for the main app container
     resources:

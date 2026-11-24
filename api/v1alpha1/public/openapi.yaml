@@ -11789,7 +11789,6 @@ components:
               type: object
       required:
           - spec
-          - status
       type: object
 
     CloudDiscoveryAssociationList:
@@ -11842,7 +11841,6 @@ components:
                           type: object
                   required:
                       - spec
-                      - status
                   type: object
               type: array
           kind:

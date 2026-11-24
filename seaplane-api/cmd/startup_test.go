@@ -115,23 +115,19 @@ func TestStartupRHSSOConfigFromEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	acl := filepath.Join(t.TempDir(), "acl.yml")
-	if err := os.WriteFile(acl, []byte("- claim: azp\n  pattern: ^cloud-services$\n"), 0600); err != nil {
+	if err := os.WriteFile(acl, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(config.RHSSOJWKSFileEnvName, jwks)
 	t.Setenv(config.RHSSOACLFileEnvName, acl)
 	t.Setenv(config.RHSSOIssuerEnvName, "https://sso.example.test/realms/redhat-external")
-	t.Setenv(config.RHSSOAudienceEnvName, "cloud-services")
-	t.Setenv(config.RHSSOAuthorizedPartyEnvName, "cloud-services")
 
 	cfg, _, err := loadStartupConfig(startupCommand(t), "us-east-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.RHSSO.JWKSFile != jwks || cfg.RHSSO.ACLFile != acl ||
-		cfg.RHSSO.Issuer != "https://sso.example.test/realms/redhat-external" ||
-		cfg.RHSSO.Audience != "cloud-services" ||
-		cfg.RHSSO.AuthorizedParty != "cloud-services" {
+		cfg.RHSSO.Issuer != "https://sso.example.test/realms/redhat-external" {
 		t.Fatalf("unexpected RH SSO configuration: %+v", cfg.RHSSO)
 	}
 }
@@ -141,8 +137,6 @@ func TestStartupRejectsPartialRHSSOConfig(t *testing.T) {
 	t.Setenv(config.RHSSOJWKSURLEnvName, "https://sso.example.test/certs")
 	t.Setenv(config.RHSSOACLFileEnvName, "")
 	t.Setenv(config.RHSSOIssuerEnvName, "")
-	t.Setenv(config.RHSSOAudienceEnvName, "")
-	t.Setenv(config.RHSSOAuthorizedPartyEnvName, "")
 	if cfg, authorizer, err := loadStartupConfig(startupCommand(t), "us-east-1"); err == nil || cfg != nil || authorizer != nil {
 		t.Fatalf("partial RH SSO configuration should fail before startup: cfg=%v authorizer=%v err=%v", cfg, authorizer, err)
 	}

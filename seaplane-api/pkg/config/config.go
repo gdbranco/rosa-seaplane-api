@@ -3,19 +3,15 @@ package config
 import "time"
 
 const (
-	RHSSOJWKSURLFlagName         = "rh-sso-jwks-url"
-	RHSSOJWKSFileFlagName        = "rh-sso-jwks-file"
-	RHSSOACLFileFlagName         = "rh-sso-acl-file"
-	RHSSOIssuerFlagName          = "rh-sso-jwt-issuer"
-	RHSSOAudienceFlagName        = "rh-sso-jwt-audience"
-	RHSSOAuthorizedPartyFlagName = "rh-sso-jwt-azp"
+	RHSSOJWKSURLFlagName  = "rh-sso-jwks-url"
+	RHSSOJWKSFileFlagName = "rh-sso-jwks-file"
+	RHSSOACLFileFlagName  = "rh-sso-acl-file"
+	RHSSOIssuerFlagName   = "rh-sso-jwt-issuer"
 
-	RHSSOJWKSURLEnvName         = "RH_SSO_JWKS_URL"
-	RHSSOJWKSFileEnvName        = "RH_SSO_JWKS_FILE"
-	RHSSOACLFileEnvName         = "RH_SSO_ACL_FILE"
-	RHSSOIssuerEnvName          = "RH_SSO_JWT_ISSUER"
-	RHSSOAudienceEnvName        = "RH_SSO_JWT_AUDIENCE"
-	RHSSOAuthorizedPartyEnvName = "RH_SSO_JWT_AZP"
+	RHSSOJWKSURLEnvName  = "RH_SSO_JWKS_URL"
+	RHSSOJWKSFileEnvName = "RH_SSO_JWKS_FILE"
+	RHSSOACLFileEnvName  = "RH_SSO_ACL_FILE"
+	RHSSOIssuerEnvName   = "RH_SSO_JWT_ISSUER"
 )
 
 type Config struct {
@@ -35,16 +31,14 @@ type AuthzConfig struct {
 // RHSSOConfig configures RH SSO JWT validation for the dual-auth POC route.
 // When all fields are empty, the route is not registered.
 type RHSSOConfig struct {
-	JWKSURL         string
-	JWKSFile        string
-	ACLFile         string
-	Issuer          string
-	Audience        string
-	AuthorizedParty string
+	JWKSURL  string
+	JWKSFile string
+	ACLFile  string
+	Issuer   string
 }
 
 func (c RHSSOConfig) Enabled() bool {
-	return c.JWKSURL != "" || c.JWKSFile != "" || c.ACLFile != "" || c.Issuer != "" || c.Audience != "" || c.AuthorizedParty != ""
+	return c.JWKSURL != "" || c.JWKSFile != "" || c.ACLFile != "" || c.Issuer != ""
 }
 
 type RateLimitConfig struct {

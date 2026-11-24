@@ -60,8 +60,6 @@ var (
 
 const (
 	rhSSOClaimIssuer               = "iss"
-	rhSSOClaimAudience             = "aud"
-	rhSSOClaimAuthorizedParty      = "azp"
 	rhSSOClaimSubject              = "sub"
 	rhSSOClaimType                 = "typ"
 	rhSSOClaimImpersonated         = "impersonated"
@@ -147,9 +145,9 @@ type rhSSOJWTVerifier struct {
 }
 
 // ValidateRHSSOConfig validates the JWT trust configuration before the API
-// server starts. A mounted ACL file may be empty, matching UHC's production
-// configuration; issuer, audience, authorized-party, and organization-admin
-// checks are enforced independently in code.
+// server starts. A mounted ACL file may be empty, as in UHC's authentication
+// handler. Issuer, subject, and organization checks are enforced in code;
+// audience and authorized-party claims are not required.
 func ValidateRHSSOConfig(cfg config.RHSSOConfig) error {
 	if !cfg.Enabled() {
 		return nil
@@ -162,12 +160,6 @@ func ValidateRHSSOConfig(cfg config.RHSSOConfig) error {
 	}
 	if cfg.Issuer == "" {
 		return fmt.Errorf("RH SSO requires %s", config.RHSSOIssuerEnvName)
-	}
-	if cfg.Audience == "" {
-		return fmt.Errorf("RH SSO requires %s", config.RHSSOAudienceEnvName)
-	}
-	if cfg.AuthorizedParty == "" {
-		return fmt.Errorf("RH SSO requires %s", config.RHSSOAuthorizedPartyEnvName)
 	}
 	if cfg.JWKSURL != "" {
 		parsed, err := url.Parse(cfg.JWKSURL)
@@ -505,13 +497,6 @@ func rhSSOIdentityFromClaims(claims jwt.MapClaims, cfg config.RHSSOConfig, requi
 	if issuer == "" || issuer != cfg.Issuer {
 		return RHSSOIdentity{}, fmt.Errorf("unexpected issuer")
 	}
-	authorizedParty, _ := claims[rhSSOClaimAuthorizedParty].(string)
-	if authorizedParty == "" || authorizedParty != cfg.AuthorizedParty {
-		return RHSSOIdentity{}, fmt.Errorf("unexpected authorized party")
-	}
-	if !hasAudience(claims[rhSSOClaimAudience], cfg.Audience) {
-		return RHSSOIdentity{}, fmt.Errorf("unexpected audience")
-	}
 	subject, _ := claims[rhSSOClaimSubject].(string)
 	if subject == "" {
 		return RHSSOIdentity{}, fmt.Errorf("missing subject")
@@ -544,20 +529,6 @@ func rhSSOIdentityFromClaims(claims jwt.MapClaims, cfg config.RHSSOConfig, requi
 		Username:       username,
 		IsOrgAdmin:     orgAdmin,
 	}, nil
-}
-
-func hasAudience(value interface{}, expected string) bool {
-	switch audience := value.(type) {
-	case string:
-		return audience == expected
-	case []interface{}:
-		for _, item := range audience {
-			if text, ok := item.(string); ok && text == expected {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func writeRHSSOAuthError(w http.ResponseWriter, apiError api.APIError) {

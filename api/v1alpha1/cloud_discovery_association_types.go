@@ -49,6 +49,7 @@ type CloudDiscoveryAssociation struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 	Spec              CloudDiscoveryAssociationSpec   `json:"spec"`
+	// +optional
 	Status            CloudDiscoveryAssociationStatus `json:"status,omitzero"`
 }
 

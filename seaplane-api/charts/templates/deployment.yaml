@@ -72,10 +72,6 @@ spec:
               value: /etc/platform-api/rh-sso/acl.yaml
             - name: RH_SSO_JWT_ISSUER
               value: {{ required "platformApi.app.rhSso.issuer is required when RH SSO is enabled" .Values.platformApi.app.rhSso.issuer | quote }}
-            - name: RH_SSO_JWT_AUDIENCE
-              value: {{ required "platformApi.app.rhSso.audience is required when RH SSO is enabled" .Values.platformApi.app.rhSso.audience | quote }}
-            - name: RH_SSO_JWT_AZP
-              value: {{ required "platformApi.app.rhSso.authorizedParty is required when RH SSO is enabled" .Values.platformApi.app.rhSso.authorizedParty | quote }}
             {{- end }}
             - name: POSTGRES_DSN
               valueFrom:

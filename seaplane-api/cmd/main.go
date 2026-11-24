@@ -69,8 +69,6 @@ func init() {
 		{name: config.RHSSOJWKSFileFlagName, description: "RH SSO JWKS file for cloud discovery association JWT authentication"},
 		{name: config.RHSSOACLFileFlagName, description: "RH SSO JWT claim ACL file"},
 		{name: config.RHSSOIssuerFlagName, description: "Exact RH SSO JWT issuer"},
-		{name: config.RHSSOAudienceFlagName, description: "Required RH SSO JWT audience for this API"},
-		{name: config.RHSSOAuthorizedPartyFlagName, description: "Required RH SSO JWT authorized party"},
 	}...)
 	serveCmd.Flags().StringVar(&legacyDynamoDBRegion, "dynamodb-region", "", "Deprecated compatibility flag; used only as a region fallback")
 	serveCmd.Flags().String("dynamodb-prefix", "", "Deprecated compatibility flag; ignored")

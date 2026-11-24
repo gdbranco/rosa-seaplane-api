@@ -133,8 +133,6 @@ func TestServeCmd(t *testing.T) {
 		config.RHSSOJWKSFileFlagName,
 		config.RHSSOACLFileFlagName,
 		config.RHSSOIssuerFlagName,
-		config.RHSSOAudienceFlagName,
-		config.RHSSOAuthorizedPartyFlagName,
 	}
 
 	for _, flagName := range expectedFlags {

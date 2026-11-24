@@ -42,15 +42,13 @@ func rhSSOFixture(t *testing.T) (config.RHSSOConfig, *rsa.PrivateKey) {
 		t.Fatal(err)
 	}
 	aclFile := filepath.Join(t.TempDir(), "acl.yml")
-	if err := os.WriteFile(aclFile, []byte("- claim: azp\n  pattern: ^cloud-services$\n"), 0600); err != nil {
+	if err := os.WriteFile(aclFile, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
 	return config.RHSSOConfig{
-		JWKSFile:        jwksFile,
-		ACLFile:         aclFile,
-		Issuer:          "https://sso.example.test/realms/redhat-external",
-		Audience:        "cloud-services",
-		AuthorizedParty: "cloud-services",
+		JWKSFile: jwksFile,
+		ACLFile:  aclFile,
+		Issuer:   "https://sso.example.test/realms/redhat-external",
 	}, privateKey
 }
 
@@ -142,11 +140,12 @@ func TestAWSAndRHSSOJWTHandlerRequiresBothIdentities(t *testing.T) {
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
-			name:       "wrong API audience",
+			name:       "audience and authorized party are not checked",
 			accountID:  "123456789012",
 			callerARN:  "arn:aws:iam::123456789012:user/test",
-			token:      rhSSOToken(t, privateKey, map[string]any{"aud": []string{"other-api"}}),
-			wantStatus: http.StatusForbidden,
+			token:      rhSSOToken(t, privateKey, map[string]any{"aud": nil, "azp": "another-client"}),
+			wantStatus: http.StatusCreated,
+			wantCalled: true,
 		},
 		{
 			name:       "missing organization claim",
@@ -200,16 +199,12 @@ func TestAWSAndRHSSOJWTHandlerRequiresBothIdentities(t *testing.T) {
 	}
 }
 
-func TestRHSSOIdentityRequiresConfiguredIssuerAndAuthorizedParty(t *testing.T) {
+func TestRHSSOIdentityDoesNotRequireAudienceOrAuthorizedParty(t *testing.T) {
 	cfg := config.RHSSOConfig{
-		Issuer:          "https://sso.example.test/realms/redhat-external",
-		Audience:        "cloud-services",
-		AuthorizedParty: "cloud-services",
+		Issuer: "https://sso.example.test/realms/redhat-external",
 	}
 	claims := jwt.MapClaims{
 		"iss":          "https://sso.example.test/realms/redhat-external",
-		"azp":          "cloud-services",
-		"aud":          "cloud-services",
 		"sub":          "user-1",
 		"org_id":       "org-1",
 		"is_org_admin": true,
@@ -217,11 +212,16 @@ func TestRHSSOIdentityRequiresConfiguredIssuerAndAuthorizedParty(t *testing.T) {
 	if _, err := rhSSOIdentityFromClaims(claims, cfg, true); err != nil {
 		t.Fatalf("valid claims rejected: %v", err)
 	}
+	claims["aud"] = []string{"other-api"}
 	claims["azp"] = "another-client"
-	if _, err := rhSSOIdentityFromClaims(claims, cfg, true); err == nil {
-		t.Fatal("unexpected authorized party was accepted")
+	if _, err := rhSSOIdentityFromClaims(claims, cfg, true); err != nil {
+		t.Fatalf("claims with other audience/authorized party rejected: %v", err)
 	}
-	claims["azp"] = "cloud-services"
+	claims["iss"] = "https://other.example.test"
+	if _, err := rhSSOIdentityFromClaims(claims, cfg, true); err == nil {
+		t.Fatal("unexpected issuer was accepted")
+	}
+	claims["iss"] = cfg.Issuer
 	claims["is_org_admin"] = false
 	if _, err := rhSSOIdentityFromClaims(claims, cfg, false); err != nil {
 		t.Fatalf("non-admin claims rejected when org-admin check is disabled: %v", err)

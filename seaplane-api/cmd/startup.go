@@ -46,8 +46,6 @@ func loadStartupConfig(cmd *cobra.Command, region string) (*config.Config, *auth
 		{config.RHSSOJWKSFileFlagName, config.RHSSOJWKSFileEnvName, &cfg.RHSSO.JWKSFile},
 		{config.RHSSOACLFileFlagName, config.RHSSOACLFileEnvName, &cfg.RHSSO.ACLFile},
 		{config.RHSSOIssuerFlagName, config.RHSSOIssuerEnvName, &cfg.RHSSO.Issuer},
-		{config.RHSSOAudienceFlagName, config.RHSSOAudienceEnvName, &cfg.RHSSO.Audience},
-		{config.RHSSOAuthorizedPartyFlagName, config.RHSSOAuthorizedPartyEnvName, &cfg.RHSSO.AuthorizedParty},
 	} {
 		value, err := stringFlagOrEnv(cmd, input.flag, input.env)
 		if err != nil {

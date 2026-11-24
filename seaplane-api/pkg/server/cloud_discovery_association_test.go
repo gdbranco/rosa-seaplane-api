@@ -107,14 +107,12 @@ func serverRHSSOConfig(t *testing.T) config.RHSSOConfig {
 		t.Fatal(err)
 	}
 	aclPath := filepath.Join(t.TempDir(), "acl.yml")
-	if err := os.WriteFile(aclPath, []byte("- claim: azp\n  pattern: ^cloud-services$\n"), 0600); err != nil {
+	if err := os.WriteFile(aclPath, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
 	return config.RHSSOConfig{
-		JWKSFile:        jwksPath,
-		ACLFile:         aclPath,
-		Issuer:          "https://sso.example.test/realms/redhat-external",
-		Audience:        "cloud-services",
-		AuthorizedParty: "cloud-services",
+		JWKSFile: jwksPath,
+		ACLFile:  aclPath,
+		Issuer:   "https://sso.example.test/realms/redhat-external",
 	}
 }
