@@ -13,9 +13,10 @@ import (
 
 // rootSchemaForOwner maps ownerType to the OpenAPI component schema name.
 var rootSchemaForOwner = map[string]string{
-	"Cluster":    "Cluster",
-	"NodePool":   "NodePool",
-	"OidcConfig": "OidcConfig",
+	"CloudDiscoveryAssociation": "CloudDiscoveryAssociation",
+	"Cluster":                   "Cluster",
+	"NodePool":                  "NodePool",
+	"OidcConfig":                "OidcConfig",
 }
 
 // runInit reads field_metadata.json (and optionally openapi.yaml) and writes pathbind-draft.yaml.

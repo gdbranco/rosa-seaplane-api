@@ -19,26 +19,63 @@ package transport
 import (
 	"net/http"
 	"strconv"
+	"strings"
 )
 
-// Adapter wraps an inner RoundTripper. It adjusts pagination query parameters
-// and forwards requests and responses unchanged (the API speaks K8s-native JSON
-// on both sides, so no body translation is needed).
+// Adapter wraps an inner RoundTripper. It adjusts generated resource paths and
+// pagination query parameters, then forwards requests and responses unchanged
+// (the API speaks K8s-native JSON on both sides, so no body translation is needed).
 type Adapter struct {
-	inner http.RoundTripper
+	inner         http.RoundTripper
+	resourcePaths map[string]string
 }
 
 // NewAdapter returns an Adapter that wraps inner.
 func NewAdapter(inner http.RoundTripper) *Adapter {
-	return &Adapter{inner: inner}
+	return NewAdapterWithResourcePaths(inner, nil)
 }
 
-// RoundTrip implements http.RoundTripper. It adjusts pagination query parameters,
-// then forwards the request and response unchanged. The seaplane-api speaks
-// K8s-native JSON (metav1.Status errors, ObjectMeta responses) end-to-end.
+// NewAdapterWithResourcePaths returns an Adapter that also maps generated
+// single-segment resource names to nested Platform API paths.
+func NewAdapterWithResourcePaths(inner http.RoundTripper, resourcePaths map[string]string) *Adapter {
+	paths := make(map[string]string, len(resourcePaths))
+	for resource, path := range resourcePaths {
+		paths[resource] = path
+	}
+	return &Adapter{inner: inner, resourcePaths: paths}
+}
+
+// RoundTrip implements http.RoundTripper. It adjusts generated resource paths
+// and pagination query parameters, then forwards the request and response
+// unchanged. The seaplane-api speaks K8s-native JSON end-to-end.
 func (a *Adapter) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = a.adaptResourcePath(req)
 	req = a.adaptListQuery(req)
 	return a.inner.RoundTrip(req)
+}
+
+// adaptResourcePath translates generated single-segment resource paths into
+// nested Platform API paths. This runs before the inner transport signs the
+// request, so SigV4 covers the final URL.
+func (a *Adapter) adaptResourcePath(req *http.Request) *http.Request {
+	if len(a.resourcePaths) == 0 {
+		return req
+	}
+	segments := strings.Split(req.URL.Path, "/")
+	changed := false
+	for i, segment := range segments {
+		if path, ok := a.resourcePaths[segment]; ok {
+			segments[i] = path
+			changed = true
+		}
+	}
+	if !changed {
+		return req
+	}
+	req = req.Clone(req.Context())
+	req.URL.Path = strings.Join(segments, "/")
+	req.URL.RawPath = ""
+	return req
 }
 
 // adaptListQuery translates the Kubernetes-style ?continue=N query parameter to

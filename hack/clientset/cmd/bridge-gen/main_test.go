@@ -57,3 +57,43 @@ type Gadget struct{}
 		}
 	}
 }
+
+func TestPlatformGenerationEmitsNestedResourcePathRewrite(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	source := `package v1alpha1
+
+// +genclient:nonNamespaced
+// +resourceName=cloud_discovery_associations
+// +bridge:watch=disabled
+// +bridge:resource-path=cloud_discovery/associations
+type CloudDiscoveryAssociation struct{}
+`
+	if err := os.WriteFile(filepath.Join(inputDir, "resources.go"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	resourceTypes := collectResourceTypes(inputDir)
+	if len(resourceTypes) != 1 {
+		t.Fatalf("collectResourceTypes returned %d resources, want 1", len(resourceTypes))
+	}
+	resource := resourceTypes[0]
+	if resource.ResourceName != "cloud_discovery_associations" ||
+		resource.ResourcePath != "cloud_discovery/associations" {
+		t.Fatalf("resource route metadata = %+v", resource)
+	}
+
+	generatePlatform(inputDir, outputDir, "platform", "example.test/client", "example.test/api", "V1alpha1Public", "")
+	generated, err := os.ReadFile(filepath.Join(outputDir, "bridge_wrappers_generated.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"func ResourcePathRewrites() map[string]string",
+		`"cloud_discovery_associations": "cloud_discovery/associations"`,
+	} {
+		if !strings.Contains(string(generated), expected) {
+			t.Errorf("generated wrappers do not contain %q", expected)
+		}
+	}
+}

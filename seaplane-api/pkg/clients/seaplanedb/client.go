@@ -2,8 +2,10 @@ package seaplanedb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -22,6 +24,16 @@ import (
 
 const accountIDLabel = seaplanev1alpha1.AccountIDLabel
 const clusterUIDLabel = seaplanev1alpha1.ClusterUIDLabel
+
+const cloudDiscoveryRoleAssociationName = "role-association"
+
+const (
+	awsAccountIDPatternValue            = `^[0-9]{12}$`
+	errAuthenticatedAWSAccountIDInvalid = "authenticated AWS account ID is invalid"
+	errAssociationOwnerMismatch         = "stored account association owner does not match its namespace"
+)
+
+var awsAccountIDPattern = regexp.MustCompile(awsAccountIDPatternValue)
 
 const spotQueueClaimTimeout = 10 * time.Minute
 const spotQueueOwnerPrefix = "cluster-"
@@ -502,6 +514,58 @@ func (c *Client) IsAccountEnrolled(ctx context.Context, accountID string) (bool,
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// CreateCloudDiscoveryAssociation creates the single role association for the
+// AWS account in request identity. The account ID is never accepted as input.
+func (c *Client) CreateCloudDiscoveryAssociation(
+	ctx context.Context,
+	spec seaplanev1alpha1.CloudDiscoveryAssociationSpec,
+	status seaplanev1alpha1.CloudDiscoveryAssociationStatus,
+) (*seaplanev1alpha1.CloudDiscoveryAssociation, error) {
+	accountID := middleware.GetAccountID(ctx)
+	if !awsAccountIDPattern.MatchString(accountID) {
+		return nil, errors.New(errAuthenticatedAWSAccountIDInvalid)
+	}
+	association := &seaplanev1alpha1.CloudDiscoveryAssociation{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: seaplanev1alpha1.SchemeGroupVersion.String(),
+			Kind:       "CloudDiscoveryAssociation",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:         accountNamespace(accountID),
+			Name:              cloudDiscoveryRoleAssociationName,
+			Labels:            map[string]string{accountIDLabel: accountID},
+			CreationTimestamp: metav1.Now(),
+		},
+		Spec:   spec,
+		Status: status,
+	}
+	if err := c.client.Create(ctx, association); err != nil {
+		return nil, err
+	}
+	return association, nil
+}
+
+// GetCloudDiscoveryAssociation retrieves the account's stored role association
+// using only the authenticated AWS account in context.
+func (c *Client) GetCloudDiscoveryAssociation(ctx context.Context) (*seaplanev1alpha1.CloudDiscoveryAssociation, error) {
+	accountID := middleware.GetAccountID(ctx)
+	if !awsAccountIDPattern.MatchString(accountID) {
+		return nil, errors.New(errAuthenticatedAWSAccountIDInvalid)
+	}
+	var association seaplanev1alpha1.CloudDiscoveryAssociation
+	err := c.client.Get(ctx, client.ObjectKey{
+		Namespace: accountNamespace(accountID),
+		Name:      cloudDiscoveryRoleAssociationName,
+	}, &association)
+	if err != nil {
+		return nil, err
+	}
+	if association.Labels[accountIDLabel] != accountID {
+		return nil, errors.New(errAssociationOwnerMismatch)
+	}
+	return &association, nil
 }
 
 // --- OidcConfig operations ---

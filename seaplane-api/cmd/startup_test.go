@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openshift-online/rosa-seaplane-api/seaplane-api/pkg/config"
 	"github.com/spf13/cobra"
 )
 
@@ -104,6 +105,46 @@ func TestStartupInputs(t *testing.T) {
 				t.Fatalf("wrong startup configuration: %+v", cfg)
 			}
 		})
+	}
+}
+
+func TestStartupRHSSOConfigFromEnvironment(t *testing.T) {
+	t.Setenv("AUTHZ_CONFIG_FILE", startupFile(t, startupBundle))
+	jwks := filepath.Join(t.TempDir(), "jwks.json")
+	if err := os.WriteFile(jwks, []byte(`{"keys":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	acl := filepath.Join(t.TempDir(), "acl.yml")
+	if err := os.WriteFile(acl, []byte("- claim: azp\n  pattern: ^cloud-services$\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(config.RHSSOJWKSFileEnvName, jwks)
+	t.Setenv(config.RHSSOACLFileEnvName, acl)
+	t.Setenv(config.RHSSOIssuerEnvName, "https://sso.example.test/realms/redhat-external")
+	t.Setenv(config.RHSSOAudienceEnvName, "cloud-services")
+	t.Setenv(config.RHSSOAuthorizedPartyEnvName, "cloud-services")
+
+	cfg, _, err := loadStartupConfig(startupCommand(t), "us-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RHSSO.JWKSFile != jwks || cfg.RHSSO.ACLFile != acl ||
+		cfg.RHSSO.Issuer != "https://sso.example.test/realms/redhat-external" ||
+		cfg.RHSSO.Audience != "cloud-services" ||
+		cfg.RHSSO.AuthorizedParty != "cloud-services" {
+		t.Fatalf("unexpected RH SSO configuration: %+v", cfg.RHSSO)
+	}
+}
+
+func TestStartupRejectsPartialRHSSOConfig(t *testing.T) {
+	t.Setenv("AUTHZ_CONFIG_FILE", startupFile(t, startupBundle))
+	t.Setenv(config.RHSSOJWKSURLEnvName, "https://sso.example.test/certs")
+	t.Setenv(config.RHSSOACLFileEnvName, "")
+	t.Setenv(config.RHSSOIssuerEnvName, "")
+	t.Setenv(config.RHSSOAudienceEnvName, "")
+	t.Setenv(config.RHSSOAuthorizedPartyEnvName, "")
+	if cfg, authorizer, err := loadStartupConfig(startupCommand(t), "us-east-1"); err == nil || cfg != nil || authorizer != nil {
+		t.Fatalf("partial RH SSO configuration should fail before startup: cfg=%v authorizer=%v err=%v", cfg, authorizer, err)
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"regexp"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/openshift-online/rosa-seaplane-api/clientset/transport"
 )
 
 // awsRegionRE matches an AWS region name within a URL host.
@@ -49,6 +50,11 @@ type Config struct {
 
 	// AWSConfig provides AWS credentials for SigV4 signing.
 	AWSConfig aws.Config
+
+	// RHSSOTokenSource provides a current raw RH SSO access token. When set,
+	// the transport sends it in X-RH-SSO-Authorization on every request,
+	// before SigV4 signing. Routes that do not require RH SSO ignore the header.
+	RHSSOTokenSource transport.RHSSOTokenSource
 }
 
 // ResolveRegion returns Region if set, otherwise derives it from Host.

@@ -152,6 +152,12 @@
     "ownerGVK": ""
   },
   {
+    "fieldPath": "spec.roleArn",
+    "writeMode": "immutable",
+    "ownerType": "CloudDiscoveryAssociation",
+    "ownerGVK": "seaplane.io/v1alpha1.CloudDiscoveryAssociation"
+  },
+  {
     "fieldPath": "spec.accountId",
     "writeMode": "service-set",
     "hidden": true,

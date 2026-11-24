@@ -32,6 +32,58 @@ import (
 	typedclient "github.com/openshift-online/rosa-seaplane-api/clientset/generated/typed/v1alpha1/public"
 )
 
+// CloudDiscoveryAssociationInterface is the platform-scoped client for CloudDiscoveryAssociation resources.
+// Only operations and options supported by the Seaplane platform API are exposed.
+// Watch is intentionally absent — the platform API does not support the Kubernetes
+// watch stream protocol; use WaitUntil for polling-based synchronization instead.
+type CloudDiscoveryAssociationInterface interface {
+	Create(ctx context.Context, obj *v1alpha1.CloudDiscoveryAssociation, opts CreateOptions) (*v1alpha1.CloudDiscoveryAssociation, error)
+	Update(ctx context.Context, obj *v1alpha1.CloudDiscoveryAssociation, opts UpdateOptions) (*v1alpha1.CloudDiscoveryAssociation, error)
+	Delete(ctx context.Context, name string, opts DeleteOptions) error
+	Get(ctx context.Context, name string, opts GetOptions) (*v1alpha1.CloudDiscoveryAssociation, error)
+	List(ctx context.Context, opts ListOptions) (*v1alpha1.CloudDiscoveryAssociationList, error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts PatchOptions) (*v1alpha1.CloudDiscoveryAssociation, error)
+}
+
+type cloudDiscoveryAssociationClient struct {
+	inner typedclient.CloudDiscoveryAssociationInterface
+}
+
+func (c *cloudDiscoveryAssociationClient) Create(ctx context.Context, obj *v1alpha1.CloudDiscoveryAssociation, opts CreateOptions) (*v1alpha1.CloudDiscoveryAssociation, error) {
+	return c.inner.Create(ctx, obj, metav1.CreateOptions{})
+}
+
+func (c *cloudDiscoveryAssociationClient) Get(ctx context.Context, name string, opts GetOptions) (*v1alpha1.CloudDiscoveryAssociation, error) {
+	return c.inner.Get(ctx, name, metav1.GetOptions{})
+}
+
+func (c *cloudDiscoveryAssociationClient) List(ctx context.Context, opts ListOptions) (*v1alpha1.CloudDiscoveryAssociationList, error) {
+	if opts.Limit < 0 || opts.Limit > 100 {
+		return nil, fmt.Errorf("List: Limit must be between 0 and 100, got %d", opts.Limit)
+	}
+	if opts.Offset < 0 {
+		return nil, fmt.Errorf("List: Offset must be non-negative, got %d", opts.Offset)
+	}
+	mo := metav1.ListOptions{Limit: opts.Limit}
+	if opts.Offset > 0 {
+		mo.Continue = strconv.FormatInt(opts.Offset, 10)
+	}
+	return c.inner.List(ctx, mo)
+}
+
+func (c *cloudDiscoveryAssociationClient) Update(ctx context.Context, obj *v1alpha1.CloudDiscoveryAssociation, opts UpdateOptions) (*v1alpha1.CloudDiscoveryAssociation, error) {
+	return c.inner.Update(ctx, obj, metav1.UpdateOptions{})
+}
+
+func (c *cloudDiscoveryAssociationClient) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts PatchOptions) (*v1alpha1.CloudDiscoveryAssociation, error) {
+	return c.inner.Patch(ctx, name, pt, data, metav1.PatchOptions{})
+}
+
+func (c *cloudDiscoveryAssociationClient) Delete(ctx context.Context, name string, opts DeleteOptions) error {
+	return c.inner.Delete(ctx, name, metav1.DeleteOptions{})
+}
+
+
 // ClusterInterface is the platform-scoped client for Cluster resources.
 // Only operations and options supported by the Seaplane platform API are exposed.
 // Watch is intentionally absent — the platform API does not support the Kubernetes
@@ -409,6 +461,7 @@ func (c *oidcConfigClient) WaitUntil(ctx context.Context, id string, condition f
 // V1alpha1PublicInterface is the platform-scoped typed client for the seaplane.io/v1alpha1 group.
 type V1alpha1PublicInterface interface {
 	RESTClient() rest.Interface
+	CloudDiscoveryAssociations() CloudDiscoveryAssociationInterface
 	Clusters() ClusterInterface
 	DNSReservations() DNSReservationInterface
 	NodePools() NodePoolInterface
@@ -426,6 +479,17 @@ func NewV1alpha1PublicClient(inner typedclient.V1alpha1PublicInterface) V1alpha1
 
 func (w *wrappedV1alpha1) RESTClient() rest.Interface {
 	return w.inner.RESTClient()
+}
+
+// ResourcePathRewrites maps generated client resource names to nested API paths.
+func ResourcePathRewrites() map[string]string {
+	return map[string]string{
+		"cloud_discovery_associations": "cloud_discovery/associations",
+	}
+}
+
+func (w *wrappedV1alpha1) CloudDiscoveryAssociations() CloudDiscoveryAssociationInterface {
+	return &cloudDiscoveryAssociationClient{inner: w.inner.CloudDiscoveryAssociations()}
 }
 
 func (w *wrappedV1alpha1) Clusters() ClusterInterface {

@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/openshift-online/rosa-seaplane-api/seaplane-api/pkg/config"
 )
 
 func TestCreateLogger(t *testing.T) {
@@ -127,6 +129,12 @@ func TestServeCmd(t *testing.T) {
 		"health-port",
 		"metrics-port",
 		"authz-config-file",
+		config.RHSSOJWKSURLFlagName,
+		config.RHSSOJWKSFileFlagName,
+		config.RHSSOACLFileFlagName,
+		config.RHSSOIssuerFlagName,
+		config.RHSSOAudienceFlagName,
+		config.RHSSOAuthorizedPartyFlagName,
 	}
 
 	for _, flagName := range expectedFlags {

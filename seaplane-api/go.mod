@@ -16,6 +16,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.67.0
 	github.com/cedar-policy/cedar-go v1.8.0
 	github.com/go-redis/redis_rate/v10 v10.0.1
+	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/onsi/ginkgo/v2 v2.32.1

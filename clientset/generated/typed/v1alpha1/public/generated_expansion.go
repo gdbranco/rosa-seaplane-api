@@ -18,6 +18,8 @@ limitations under the License.
 
 package public
 
+type CloudDiscoveryAssociationExpansion interface{}
+
 type ClusterExpansion interface{}
 
 type DNSReservationExpansion interface{}

@@ -22,6 +22,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const (
+	errAssociationDBClientRequired = "seaplane database client is required when RH SSO association is enabled"
+	errAssociationMiddlewareSetup  = "configure cloud discovery association authentication"
+)
+
 // Server represents the API server
 type Server struct {
 	cfg           *config.Config
@@ -174,6 +179,22 @@ func New(cfg *config.Config, dbClient *seaplanedb.Client, authorizer *authz.Auth
 	dnsReservationRouter.HandleFunc("/{id}", dnsReservationHandler.Get).Methods(http.MethodGet)
 	dnsReservationRouter.HandleFunc("/{id}/labels", dnsReservationHandler.Labels).Methods(http.MethodGet, http.MethodPatch)
 	dnsReservationRouter.HandleFunc("/{id}", dnsReservationHandler.Delete).Methods(http.MethodDelete)
+
+	// The POC route has its own dual-auth chain. It deliberately does not use
+	// the customer resource router or the platform-only /accounts allowlist.
+	if cfg.RHSSO.Enabled() {
+		if dbClient == nil {
+			return nil, fmt.Errorf("%s", errAssociationDBClientRequired)
+		}
+		associationHandler := apphandlers.NewCloudDiscoveryAssociationHandler(dbClient, logger)
+		dualAuthMiddleware, err := middleware.NewAWSAndRHSSOJWTMiddleware(cfg.RHSSO, logger)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", errAssociationMiddlewareSetup, err)
+		}
+		associationRouter := apiRouter.PathPrefix(api.CloudDiscoveryAssociationsPath).Subrouter()
+		associationRouter.Use(dualAuthMiddleware)
+		associationRouter.HandleFunc("", associationHandler.Create).Methods(http.MethodPost)
+	}
 
 	// Health and info routes on API server (no auth required)
 	apiRouter.HandleFunc("/api/v0/live", healthHandler.Liveness).Methods(http.MethodGet)

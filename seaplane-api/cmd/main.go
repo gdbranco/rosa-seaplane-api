@@ -34,6 +34,11 @@ var (
 	metricsPort              int
 )
 
+type stringFlagDefinition struct {
+	name        string
+	description string
+}
+
 func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -59,6 +64,14 @@ func init() {
 	serveCmd.Flags().String("allowed-accounts", "", "Deprecated compatibility flag; ignored")
 	serveCmd.Flags().String("authz-config-file", "", "Authorization configuration bundle (required)")
 	serveCmd.Flags().String("authz-management-config-file", "", "Optional authorization management configuration")
+	addStringFlags(serveCmd, []stringFlagDefinition{
+		{name: config.RHSSOJWKSURLFlagName, description: "RH SSO JWKS URL for cloud discovery association JWT authentication"},
+		{name: config.RHSSOJWKSFileFlagName, description: "RH SSO JWKS file for cloud discovery association JWT authentication"},
+		{name: config.RHSSOACLFileFlagName, description: "RH SSO JWT claim ACL file"},
+		{name: config.RHSSOIssuerFlagName, description: "Exact RH SSO JWT issuer"},
+		{name: config.RHSSOAudienceFlagName, description: "Required RH SSO JWT audience for this API"},
+		{name: config.RHSSOAuthorizedPartyFlagName, description: "Required RH SSO JWT authorized party"},
+	}...)
 	serveCmd.Flags().StringVar(&legacyDynamoDBRegion, "dynamodb-region", "", "Deprecated compatibility flag; used only as a region fallback")
 	serveCmd.Flags().String("dynamodb-prefix", "", "Deprecated compatibility flag; ignored")
 	serveCmd.Flags().StringVar(&postgresDSN, "postgres-dsn", "", "PostgreSQL connection string (required)")
@@ -69,6 +82,12 @@ func init() {
 	serveCmd.Flags().IntVar(&metricsPort, "metrics-port", 9090, "Metrics server port")
 
 	rootCmd.AddCommand(serveCmd)
+}
+
+func addStringFlags(cmd *cobra.Command, definitions ...stringFlagDefinition) {
+	for _, definition := range definitions {
+		cmd.Flags().String(definition.name, "", definition.description)
+	}
 }
 
 func runServe(cmd *cobra.Command, args []string) error {

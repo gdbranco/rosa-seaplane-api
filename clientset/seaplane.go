@@ -58,7 +58,8 @@ func (c *Clientset) SeaplaneV1alpha1() platform.V1alpha1PublicInterface {
 }
 
 // NewForConfig creates a Clientset from a Config, wiring AWS SigV4 authentication
-// and pointing the underlying REST client at /api/v0.
+// and pointing the underlying REST client at /api/v0. If RHSSOTokenSource is
+// configured, its bearer token is sent in X-RH-SSO-Authorization on requests.
 func NewForConfig(cfg *hfrest.Config) (*Clientset, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("seaplane: Config must not be nil")
@@ -79,6 +80,7 @@ func NewForConfig(cfg *hfrest.Config) (*Clientset, error) {
 	}
 
 	sigv4 := transport.New(nil, cfg.AWSConfig, region, cfg.AccountID, cfg.CallerARN)
+	requestTransport := transport.NewRHSSOAuthorizationRoundTripper(sigv4, cfg.RHSSOTokenSource)
 
 	// Splitting the base path into APIPath="/api" + GroupVersion.Version="v0"
 	// produces the same /api/v0 URL prefix while satisfying the scheme's
@@ -92,14 +94,17 @@ func NewForConfig(cfg *hfrest.Config) (*Clientset, error) {
 			GroupVersion:         &apiGV,
 			NegotiatedSerializer: scheme.Codecs.WithoutConversion(),
 		},
-		Transport: sigv4,
+		Transport: requestTransport,
 	}
 
 	// Use RESTClientForConfigAndClient + New() rather than the generated
 	// NewForConfigAndClient, which calls setConfigDefaults() and would
 	// override our APIPath and GroupVersion back to Kubernetes API defaults.
-	// The Adapter wraps sigv4 so response rewriting is decoupled from signing.
-	httpClient := &http.Client{Transport: transport.NewAdapter(sigv4)}
+	// The Adapter wraps the token and SigV4 transports so path/query rewrites
+	// happen before the request is signed.
+	httpClient := &http.Client{
+		Transport: transport.NewAdapterWithResourcePaths(requestTransport, platform.ResourcePathRewrites()),
+	}
 	restClient, err := k8srest.RESTClientForConfigAndClient(restCfg, httpClient)
 	if err != nil {
 		return nil, fmt.Errorf("seaplane: building REST client: %w", err)

@@ -28,6 +28,10 @@ type FakeV1alpha1Public struct {
 	*testing.Fake
 }
 
+func (c *FakeV1alpha1Public) CloudDiscoveryAssociations() public.CloudDiscoveryAssociationInterface {
+	return newFakeCloudDiscoveryAssociations(c)
+}
+
 func (c *FakeV1alpha1Public) Clusters() public.ClusterInterface {
 	return newFakeClusters(c)
 }

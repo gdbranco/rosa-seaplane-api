@@ -194,9 +194,10 @@ type AliasBundle struct {
 
 // SDKTypeForOwner maps ownerType to SDK Go type.
 var SDKTypeForOwner = map[string]string{
-	"Cluster":    "v1alpha1.Cluster",
-	"NodePool":   "v1alpha1.NodePool",
-	"OidcConfig": "v1alpha1.OidcConfig",
+	"CloudDiscoveryAssociation": "v1alpha1.CloudDiscoveryAssociation",
+	"Cluster":                   "v1alpha1.Cluster",
+	"NodePool":                  "v1alpha1.NodePool",
+	"OidcConfig":                "v1alpha1.OidcConfig",
 }
 
 // ── Helper functions ──────────────────────────────────────────────────────────

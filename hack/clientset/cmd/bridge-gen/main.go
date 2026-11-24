@@ -40,6 +40,8 @@ var (
 	watchDisabledRE = regexp.MustCompile(`\+bridge:watch=disabled`)
 	waitRE          = regexp.MustCompile(`\+bridge:wait\b`)
 	nonNamespacedRE = regexp.MustCompile(`\+genclient:nonNamespaced\b`)
+	resourceNameRE  = regexp.MustCompile(`\+resourceName=([^\s]+)`)
+	resourcePathRE  = regexp.MustCompile(`\+bridge:resource-path=([^\s]+)`)
 )
 
 // resourceType describes a CRD type annotated with +bridge:watch or +bridge:wait.
@@ -48,6 +50,8 @@ type resourceType struct {
 	PluralName      string // e.g. "Clusters"
 	PluralLower     string // e.g. "clusters" — URL path segment key
 	LowerName       string // e.g. "cluster"
+	ResourceName    string // client-gen's single-segment resource name
+	ResourcePath    string // optional nested Platform API route path
 	WatchDisabled   bool
 	Wait            bool
 	NonNamespaced   bool // set when +genclient:nonNamespaced is present
@@ -228,6 +232,17 @@ func New{{.TypedClientPrefix}}Client(inner typedclient.{{.TypedClientPrefix}}Int
 func (w *wrappedV1alpha1) RESTClient() rest.Interface {
 	return w.inner.RESTClient()
 }
+
+// ResourcePathRewrites maps generated client resource names to nested API paths.
+func ResourcePathRewrites() map[string]string {
+	return map[string]string{
+{{- range .Types}}
+{{- if .ResourcePath}}
+		{{printf "%q" .ResourceName}}: {{printf "%q" .ResourcePath}},
+{{- end}}
+{{- end}}
+	}
+}
 {{range .Types}}
 {{- if .NonNamespaced}}
 func (w *wrappedV1alpha1) {{.PluralName}}() {{.Name}}Interface {
@@ -366,7 +381,7 @@ func collectResourceTypes(dir string) []resourceType {
 			// next type declaration that follows it.
 			for _, cg := range file.Comments {
 				var hasWatch, hasWait, hasNonNamespaced bool
-				var parentKind, parentLabel string
+				var parentKind, parentLabel, resourceName, resourcePath string
 				for _, c := range cg.List {
 					if watchDisabledRE.MatchString(c.Text) {
 						hasWatch = true
@@ -377,6 +392,12 @@ func collectResourceTypes(dir string) []resourceType {
 					if nonNamespacedRE.MatchString(c.Text) {
 						hasNonNamespaced = true
 					}
+					if matches := resourceNameRE.FindStringSubmatch(c.Text); len(matches) > 1 {
+						resourceName = matches[1]
+					}
+					if matches := resourcePathRE.FindStringSubmatch(c.Text); len(matches) > 1 {
+						resourcePath = matches[1]
+					}
 					if parent := parentMarkerRE.FindStringSubmatch(c.Text); parent != nil {
 						parentKind, parentLabel = parent[1], parent[2]
 					}
@@ -386,6 +407,14 @@ func collectResourceTypes(dir string) []resourceType {
 				}
 				if parentKind != "" && parentLabel == "" {
 					fatalf("invalid +bridge:parent marker: label must be set")
+				}
+				if resourcePath != "" {
+					if resourceName == "" {
+						fatalf("+bridge:resource-path requires +resourceName")
+					}
+					if strings.HasPrefix(resourcePath, "/") || strings.HasSuffix(resourcePath, "/") || strings.Contains(resourcePath, "//") {
+						fatalf("invalid +bridge:resource-path %q: use non-empty relative path segments", resourcePath)
+					}
 				}
 				cgEnd := cg.End()
 				for _, td := range typeDecls {
@@ -403,6 +432,8 @@ func collectResourceTypes(dir string) []resourceType {
 						PluralName:      plural,
 						PluralLower:     strings.ToLower(plural),
 						LowerName:       strings.ToLower(name[:1]) + name[1:],
+						ResourceName:    resourceName,
+						ResourcePath:    resourcePath,
 						WatchDisabled:   hasWatch,
 						Wait:            hasWait,
 						NonNamespaced:   hasNonNamespaced,

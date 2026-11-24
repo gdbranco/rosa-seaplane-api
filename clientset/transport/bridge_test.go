@@ -157,6 +157,34 @@ func TestRoundTrip_NativeMetav1StatusPassesThrough(t *testing.T) {
 	}
 }
 
+func TestRoundTrip_NestedResourcePathRewritten(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	adapter := NewAdapterWithResourcePaths(http.DefaultTransport, map[string]string{
+		"cloud_discovery_associations": "cloud_discovery/associations",
+	})
+	req := postRequest(server.URL+"/prod/api/v0/cloud_discovery_associations/role-association", `{}`)
+	resp, err := adapter.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	if resp != nil {
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				t.Errorf("resp.Body.Close: %v", err)
+			}
+		}()
+	}
+	if gotPath != "/prod/api/v0/cloud_discovery/associations/role-association" {
+		t.Errorf("request path = %q, want nested association path", gotPath)
+	}
+}
+
 // --- adaptListQuery ---
 
 func TestAdaptListQuery_NumericContinueRewrittenToOffset(t *testing.T) {

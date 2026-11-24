@@ -6,13 +6,33 @@ role ARN. It does not yet assume or validate the role with STS.
 
 ## Request and identity
 
-The request body contains only the role ARN:
+The generated client sends a resource-shaped request:
 
 ```json
 {
-  "roleArn": "arn:aws:iam::123456789012:role/SeaplaneCloudDiscovery"
+  "metadata": {
+    "name": "role-association"
+  },
+  "spec": {
+    "roleArn": "arn:aws:iam::123456789012:role/SeaplaneCloudDiscovery"
+  }
 }
 ```
+
+The public resource is generated from the internal API type. `client-gen`
+generates the typed Create operation, and `bridge-gen` exposes it as
+`CloudDiscoveryAssociations().Create(...)`. The client uses the single-segment
+resource name `cloud_discovery_associations`; the generated transport adapter
+rewrites that segment to `cloud_discovery/associations` before the RH SSO and
+SigV4 transports run, preserving the nested route for this and future
+cloud-discovery resources. The 201 response is the same resource shape, with
+`metadata.creationTimestamp` and `status.organizationId` set by the API.
+
+Run `make generate` in `rosa-seaplane-api` to regenerate the public API types,
+clientset, OpenAPI schemas, and pathbind draft. OpenAPI schemas are generated
+from the public types; do not edit the generated OpenAPI file by hand. When the
+API/clientset candidate is available, ROSA consumes it and runs `make generate`
+to refresh its pathbind helpers and mocks.
 
 The route requires two independent credentials:
 
@@ -25,10 +45,17 @@ The route requires two independent credentials:
 The account ID is derived only from the verified gateway identity; it is not
 accepted in the body or URL. The role ARN must be an IAM role in that exact
 AWS account. The JWT must have the configured issuer, audience, and `azp`;
-`sub`, an organization claim (`org_id`, `organization.id`, or `rh-org-id`),
-and `is_org_admin: true` are required. `account_id`, `username`, and
-`preferred_username` are stored when present. No Accounts Management lookup is
+`sub`, and an organization claim (`org_id`, `organization.id`, or `rh-org-id`)
+are required. The organization claim is persisted as the association's target;
+other user identity claims are not stored. No Accounts Management lookup is
 performed.
+
+Org-admin enforcement is a functional middleware option. It is disabled on the
+association route while testing with a non-admin account. A route that requires
+an org admin passes `middleware.WithRHSSOOrgAdminRequired()` to
+`NewAWSAndRHSSOJWTMiddleware`, then attaches it with the subrouter's `.Use()`;
+the middleware then requires `is_org_admin: true`
+before calling its handler.
 
 The decoded ID-token example with `typ: "ID"` is not accepted. Send the normal
 bearer access token used by Clusters Service. For migration continuity, the
@@ -55,43 +82,59 @@ when it returns a valid JWKS; the local file is used only if the URL is
 unavailable, and its keys are not merged with a healthy URL response. RSA
 `RS256` and `RS512` signing keys are accepted.
 ACL rules follow UHC semantics: a token is ACL-allowed if any configured rule
-matches. Issuer, audience, authorized party, and org-admin checks are separate
-mandatory checks and cannot be weakened by an empty ACL.
+matches. Issuer, audience, and authorized-party checks are always mandatory and
+cannot be weakened by an empty ACL. Org-admin checking is independently enabled
+per route through the middleware option.
 
 ## Storage and limits
 
 The record is stored as an internal typed seaplane-db object in
 `account-<aws-account-id>`, with a fixed name. The database primary key makes
 creation atomic: the first request succeeds; later creates return `409`.
-There is no update or delete route in this POC.
+The public collection path currently implements only `POST`; there are no
+get/list, update, or delete routes in this POC.
 
-The POC stores the role ARN and RH SSO subject/account/organization attribution.
-It does not store JWTs or AWS credentials. Trust-policy validation, an STS
-assume-role check, role rotation, and revocation are future work.
+The POC stores the role ARN in `spec`, the organization ID in server-managed
+`status`, and the creation time in `metadata.creationTimestamp`. The AWS account
+is represented by the account-scoped namespace and label. It does not store RH
+SSO user identifiers, JWTs, or AWS credentials. Trust-policy validation, an STS
+assume-role check, role rotation, and revocation are future work. The role ARN
+is create-only; the POC has no update or delete operation.
 
 ## ROSA login and request flow
 
 `rosa login --use-auth-code` uses the OCM CLI OAuth client (`ocm-cli`) with
 authorization code + PKCE. The CLI stores the resulting refresh token, then
 uses the OCM SDK connection to obtain and persist an access token. The
-association operation must send that **access token**, not the ID token from
-the browser's OIDC response. Tokens with a `typ: ID` claim are rejected.
+`rosa link aws-role-association` command sends that **access token**, not the
+ID token from the browser's OIDC response. Tokens with a `typ: ID` claim are
+rejected. The existing `rosa link ocm-role` command remains the separate OCM
+account-management workflow.
 
-The normal `WithSeaplane` client path is currently AWS/SigV4-only. The POC
-operation needs a token provider that refreshes/obtains the OCM access token
-and adds it as `X-RH-SSO-Authorization` before the SigV4 signer runs. This
-preserves `Authorization` for SigV4 and includes the additional header in the
-signed request. `rosa login --seaplane-url` by itself does not perform OCM
-login, so it is insufficient for this operation.
+Example:
+
+```sh
+rosa link aws-role-association \
+  --role-arn arn:aws:iam::123456789012:role/SeaplaneCloudDiscovery
+```
+
+For this command, ROSA initializes its OCM connection before `WithSeaplane`.
+The Seaplane client gets a token source backed by the OCM connection; it obtains
+a current access token for each request and adds
+`X-RH-SSO-Authorization: Bearer <access-token>` before SigV4 signing. This
+preserves `Authorization` for SigV4 and includes the RH SSO header in
+`SignedHeaders`. Other Seaplane commands that do not initialize OCM remain
+AWS/SigV4-only. `rosa login --seaplane-url` by itself does not perform OCM
+login, so this command also requires an OCM login.
 
 ```mermaid
 flowchart TD
     Login["ROSA login obtains RH SSO access token"]
-    Client["ROSA sends association request with SigV4 and RH SSO token"]
+    Client["Generated Create sends resource body with SigV4 and RH SSO token"]
     Gateway["API Gateway verifies SigV4 and derives AWS account identity"]
-    Auth["Seaplane verifies RH SSO JWT using JWKS and required claims"]
+    Auth["Seaplane verifies RH SSO JWT using JWKS and configured claim checks"]
     SameAccount["Check role ARN account matches SigV4 account"]
-    Store["Create one association for the AWS account"]
+    Store["Store spec.roleArn, status.organizationId, and metadata.creationTimestamp"]
     Result["Return 201, or 409 if already associated"]
 
     Login --> Client --> Gateway --> Auth --> SameAccount --> Store --> Result
@@ -104,7 +147,7 @@ flowchart TD
 
 The current OCM client login uses `aud=cloud-services`; the POC config must
 allow that value during migration. The sample `typ: ID` token is not forwarded:
-the client must use the access token issued/refreshed for API requests.
+the client uses the access token issued/refreshed through the OCM SDK connection.
 
 ## Validation boundary and token acquisition
 
@@ -112,8 +155,9 @@ The API does not exchange credentials with RH SSO, call token introspection,
 or make a live SSO authorization request for each association request. It
 validates the access token locally: the JWT signature must verify against a
 trusted RH SSO public signing key, and its issuer, audience, authorized party,
-time claims, ACL, organization, and org-admin claim must pass the configured
-checks.
+time claims, ACL, and organization claims must pass the configured checks.
+Org-admin status is additionally required only when the route enables the
+middleware option.
 
 The API does retrieve public JWKS keys from the configured RH SSO certs URL at
 startup and refresh, using the mounted JWKS file only when that URL is

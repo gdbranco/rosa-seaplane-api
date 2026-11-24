@@ -109,6 +109,7 @@ The platform API differs from a standard Kubernetes API in three ways that requi
 | Requests are signed with AWS SigV4                       | `transport/sigv4.go` — custom RoundTripper                                                                                                |
 | Account identity and storage namespace are separate       | `AccountID` in SDK config supplies the signed `X-Amz-Account-Id`; seaplane-api derives `account-<accountID>` and sets the stored namespace, while an optional request namespace is validated |
 | Pagination uses `offset` rather than Kubernetes `continue` | `transport/bridge.go` — query adapter                                                                                                      |
+| Nested API routes use one-segment generated resources     | `+bridge:resource-path` generates aliases that the adapter rewrites before RH SSO and SigV4 processing                                  |
 | NodePool parent and account scope differ                  | `NodePools()` hides account namespace plumbing; the `<cluster>.<child>` prefix resolves the parent, while its UID is stored in the server-set ownerReference and label |
 
 ### `rest/config.go` — SDK configuration
@@ -153,6 +154,13 @@ encoded as a numeric string in `metav1.ListOptions.Continue`, because that is
 what the generated client serializes. The adapter rewrites numeric
 `?continue=N` to `?offset=N` before the request reaches the Platform API.
 
+`client-gen` resource names are single path segments. For a nested Platform API
+route, annotate the resource with both `+resourceName=<single-segment-name>` and
+`+bridge:resource-path=<nested/path>`. `bridge-gen` emits the alias table, and
+the adapter rewrites the generated segment before the RH SSO and SigV4
+transports run. This keeps typed client generation intact while allowing
+collections such as `/cloud_discovery/associations`.
+
 ### `platform/options.go` — platform-scoped option types
 
 Rather than exposing `metav1.GetOptions`, `metav1.ListOptions`, etc. (which carry Kubernetes-specific fields the platform API does not honor), the platform package defines its own minimal option types:
@@ -176,7 +184,8 @@ owner-label selector; no parent identity is inferred from namespace.
 
 ### `seaplane.go` — entry point and transport chain
 
-`NewForConfig` wires the two transports together and constructs the REST client:
+`NewForConfig` composes the optional RH SSO token-header transport outside the
+SigV4 signer, then constructs the REST client:
 
 ```
 HTTP call flow:
@@ -184,7 +193,10 @@ HTTP call flow:
   Generated client code
         │
         ▼
-  Adapter.RoundTrip          ← pagination query rewrite only
+  Adapter.RoundTrip          ← nested route + pagination rewrites
+        │
+        ▼
+  RHSSOAuthorization         ← optional X-RH-SSO-Authorization header
         │
         ▼
   SigV4RoundTripper.RoundTrip ← namespace→account rewrite + SigV4 signing
@@ -192,6 +204,13 @@ HTTP call flow:
         ▼
   http.DefaultTransport       ← actual network call
 ```
+
+`rest.Config.RHSSOTokenSource`, when configured, supplies a current raw access
+token on every request. The transport sets `X-RH-SSO-Authorization: Bearer
+<token>` before the SigV4 signer runs, so the custom header is included in
+SigV4's `SignedHeaders`. Without a token source, no RH SSO header is added.
+This client option does not decide which routes require RH SSO; the service
+enforces that on its route-specific middleware.
 
 **Bypassing `setConfigDefaults`**
 

@@ -162,6 +162,16 @@ var (
 	ErrAccountsFailed    APIError
 )
 
+// Cloud discovery role association error codes
+var (
+	ErrCloudDiscoveryAssociationInvalidBody  APIError
+	ErrCloudDiscoveryAssociationIdentity     APIError
+	ErrCloudDiscoveryAssociationInvalidRole  APIError
+	ErrCloudDiscoveryAssociationCrossAccount APIError
+	ErrCloudDiscoveryAssociationConflict     APIError
+	ErrCloudDiscoveryAssociationCreateFailed APIError
+)
+
 // Info error codes
 var ErrInfoRegionalAccountUnavailable APIError
 
@@ -319,6 +329,14 @@ func init() {
 	ErrAccountsForbidden = APIError{Code: "ACCOUNTS-MGMT-001", HTTPStatus: http.StatusForbidden, Message: "Only the platform account may manage the account allowlist"}
 	ErrAccountsInvalidID = APIError{Code: "ACCOUNTS-MGMT-002", HTTPStatus: http.StatusBadRequest, Message: "accountId must be a 12-digit AWS account ID"}
 	ErrAccountsFailed = APIError{Code: "ACCOUNTS-MGMT-003", HTTPStatus: http.StatusInternalServerError, Message: "Failed to update the account allowlist"}
+
+	// Cloud discovery role association — Create
+	ErrCloudDiscoveryAssociationInvalidBody = APIError{Code: "CLOUD-DISCOVERY-ASSOCIATIONS-CREATE-001", HTTPStatus: http.StatusBadRequest, Message: "Invalid CloudDiscoveryAssociation resource; spec.roleArn is required"}
+	ErrCloudDiscoveryAssociationIdentity = APIError{Code: "CLOUD-DISCOVERY-ASSOCIATIONS-CREATE-002", HTTPStatus: http.StatusForbidden, Message: "AWS and RH SSO identities are required"}
+	ErrCloudDiscoveryAssociationInvalidRole = APIError{Code: "CLOUD-DISCOVERY-ASSOCIATIONS-CREATE-003", HTTPStatus: http.StatusBadRequest, Message: "roleArn must identify an AWS IAM role"}
+	ErrCloudDiscoveryAssociationCrossAccount = APIError{Code: "CLOUD-DISCOVERY-ASSOCIATIONS-CREATE-004", HTTPStatus: http.StatusForbidden, Message: "Cross-account role associations are not allowed"}
+	ErrCloudDiscoveryAssociationConflict = APIError{Code: "CLOUD-DISCOVERY-ASSOCIATIONS-CREATE-005", HTTPStatus: http.StatusConflict, Message: "An AWS role association already exists for this account"}
+	ErrCloudDiscoveryAssociationCreateFailed = APIError{Code: "CLOUD-DISCOVERY-ASSOCIATIONS-CREATE-006", HTTPStatus: http.StatusInternalServerError, Message: "Failed to create cloud discovery role association"}
 
 	// Info
 	ErrInfoRegionalAccountUnavailable = APIError{Code: "INFO-001", HTTPStatus: http.StatusServiceUnavailable, Message: "regional account ID is not configured"}

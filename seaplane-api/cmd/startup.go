@@ -7,8 +7,11 @@ import (
 
 	"github.com/openshift-online/rosa-seaplane-api/seaplane-api/pkg/authz"
 	"github.com/openshift-online/rosa-seaplane-api/seaplane-api/pkg/config"
+	"github.com/openshift-online/rosa-seaplane-api/seaplane-api/pkg/middleware"
 	"github.com/spf13/cobra"
 )
+
+const errInvalidRHSSOConfig = "invalid RH SSO authentication configuration"
 
 // loadStartupConfig loads service configuration and fixes authorization to the
 // deployment region for policy attachment selection, Cedar context, and resource identities.
@@ -35,6 +38,28 @@ func loadStartupConfig(cmd *cobra.Command, region string) (*config.Config, *auth
 	}
 
 	for _, input := range []struct {
+		flag   string
+		env    string
+		target *string
+	}{
+		{config.RHSSOJWKSURLFlagName, config.RHSSOJWKSURLEnvName, &cfg.RHSSO.JWKSURL},
+		{config.RHSSOJWKSFileFlagName, config.RHSSOJWKSFileEnvName, &cfg.RHSSO.JWKSFile},
+		{config.RHSSOACLFileFlagName, config.RHSSOACLFileEnvName, &cfg.RHSSO.ACLFile},
+		{config.RHSSOIssuerFlagName, config.RHSSOIssuerEnvName, &cfg.RHSSO.Issuer},
+		{config.RHSSOAudienceFlagName, config.RHSSOAudienceEnvName, &cfg.RHSSO.Audience},
+		{config.RHSSOAuthorizedPartyFlagName, config.RHSSOAuthorizedPartyEnvName, &cfg.RHSSO.AuthorizedParty},
+	} {
+		value, err := stringFlagOrEnv(cmd, input.flag, input.env)
+		if err != nil {
+			return nil, nil, err
+		}
+		*input.target = value
+	}
+	if err := middleware.ValidateRHSSOConfig(cfg.RHSSO); err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", errInvalidRHSSOConfig, err)
+	}
+
+	for _, input := range []struct {
 		env    string
 		target *string
 	}{
@@ -47,4 +72,22 @@ func loadStartupConfig(cmd *cobra.Command, region string) (*config.Config, *auth
 		}
 	}
 	return cfg, authorizer, nil
+}
+
+// stringFlagOrEnv uses an explicitly set flag over its environment fallback.
+// Missing flags are allowed for startup helpers that construct minimal commands.
+func stringFlagOrEnv(cmd *cobra.Command, flag, env string) (string, error) {
+	if cmd.Flags().Lookup(flag) == nil {
+		return os.Getenv(env), nil
+	}
+	value, err := cmd.Flags().GetString(flag)
+	if err != nil {
+		return "", err
+	}
+	if !cmd.Flags().Changed(flag) {
+		if environmentValue, exists := os.LookupEnv(env); exists {
+			value = environmentValue
+		}
+	}
+	return value, nil
 }

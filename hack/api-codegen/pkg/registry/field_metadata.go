@@ -180,6 +180,14 @@ var FieldRegistry = TypedFieldRegistry{
 			OwnerGVK:  "",
 		},
 	},
+	"CloudDiscoveryAssociation": {
+		"spec.roleArn": {
+			FieldPath: "spec.roleArn",
+			WriteMode: Immutable,
+			OwnerType: "CloudDiscoveryAssociation",
+			OwnerGVK:  "seaplane.io/v1alpha1.CloudDiscoveryAssociation",
+		},
+	},
 	"Cluster": {
 		"spec.accountId": {
 			FieldPath: "spec.accountId",

@@ -475,7 +475,7 @@ generate-openapi: codegen-conversion
 	./bin/openapi-merge \
 		-spec $(OPENAPI_SPEC) \
 		-generated $(OPENAPI_GENERATED) \
-		-schemas Cluster,ClusterList,ClusterSpec,ClusterStatus,NodePool,NodePoolList,NodePoolSpec,NodePoolStatus,OidcConfig,OidcConfigList,OidcConfigStatus,DNSReservation,DNSReservationList,DNSReservationSpec,DNSReservationStatus,PlacementReference,Capabilities,HostedClusterSpecPassthrough,NodePoolSpecPassthrough,ClusterConfiguration,MachineConfigSpec,PlatformSpec,NodePoolPlatform
+		-schemas Cluster,ClusterList,ClusterSpec,ClusterStatus,NodePool,NodePoolList,NodePoolSpec,NodePoolStatus,OidcConfig,OidcConfigList,OidcConfigStatus,DNSReservation,DNSReservationList,DNSReservationSpec,DNSReservationStatus,CloudDiscoveryAssociation,CloudDiscoveryAssociationList,CloudDiscoveryAssociationSpec,CloudDiscoveryAssociationStatus,PlacementReference,Capabilities,HostedClusterSpecPassthrough,NodePoolSpecPassthrough,ClusterConfiguration,MachineConfigSpec,PlatformSpec,NodePoolPlatform
 
 verify-openapi: generate-openapi
 	git diff --exit-code $(OPENAPI_SPEC)

@@ -28,6 +28,7 @@ import (
 
 type V1alpha1PublicInterface interface {
 	RESTClient() rest.Interface
+	CloudDiscoveryAssociationsGetter
 	ClustersGetter
 	DNSReservationsGetter
 	NodePoolsGetter
@@ -37,6 +38,10 @@ type V1alpha1PublicInterface interface {
 // V1alpha1PublicClient is used to interact with features provided by the v1alpha1 group.
 type V1alpha1PublicClient struct {
 	restClient rest.Interface
+}
+
+func (c *V1alpha1PublicClient) CloudDiscoveryAssociations() CloudDiscoveryAssociationInterface {
+	return newCloudDiscoveryAssociations(c)
 }
 
 func (c *V1alpha1PublicClient) Clusters() ClusterInterface {
